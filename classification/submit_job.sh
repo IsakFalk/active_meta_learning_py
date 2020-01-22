@@ -15,6 +15,10 @@ mkdir -p /scratch0/jitfalk/$JOB_ID
 hostname
 date
 
+# Source python
+source /share/apps/examples/source_files/python/python-3.7.2.source
+
+# Get into project dir
 cd /home/jitfalk/active_meta_learning_py/classification
 
 # Run main script
