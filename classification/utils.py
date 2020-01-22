@@ -134,6 +134,19 @@ def dump_args_to_json(args, save_path):
         json.dump(d, f, sort_keys=True, indent=4)
 
 
+def dump_runs_to_npy(
+    all_test_loss_uniform,
+    all_test_acc_uniform,
+    all_test_loss_fw,
+    all_test_acc_fw,
+    save_path,
+):
+    np.save(save_path / "test_loss_uniform.npy", all_test_loss_uniform)
+    np.save(save_path / "test_acc_uniform.npy", all_test_acc_uniform)
+    np.save(save_path / "test_loss_fw.npy", all_test_loss_fw)
+    np.save(save_path / "test_acc_fw.npy", all_test_acc_fw)
+
+
 def dump_runs_to_json(runs_dict, save_path):
     with open(save_path / "runs.json", "w+") as f:
         json.dump(runs_dict, f)
