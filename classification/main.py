@@ -1,5 +1,6 @@
 import pickle
 import logging
+from random import shuffle
 from pathlib import Path
 from datetime import datetime
 
@@ -66,48 +67,183 @@ def get_outer_loss(batch, model, lr_inner, device, first_order, test=False):
     return outer_loss.div_(batch_size), accuracy.div_(batch_size)
 
 
+def generate_dataloaders(args):
+    # Create dataset
+    if args.dataset == "omniglot":
+        dataset_train = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_train,
+            seed=args.seed,
+            download=True,  # Only downloads if not in data_path
+        )
+        dataloader_train = BatchMetaDataLoader(
+            dataset_train,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+
+        dataset_val = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_val,
+            seed=args.seed,
+            download=True,
+        )
+        dataloader_val = BatchMetaDataLoader(
+            dataset_val,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+
+        dataset_test = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_test,
+            download=True,
+        )
+        dataloader_test = BatchMetaDataLoader(
+            dataset_test,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+    elif args.dataset == "miniimagenet":
+        dataset_train = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_train,
+            seed=args.seed,
+            download=True,  # Only downloads if not in data_path
+        )
+        dataloader_train = BatchMetaDataLoader(
+            dataset_train,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+
+        dataset_val = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_val,
+            seed=args.seed,
+            download=True,
+        )
+        dataloader_val = BatchMetaDataLoader(
+            dataset_val,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+
+        dataset_test = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_test,
+            download=True,
+        )
+        dataloader_test = BatchMetaDataLoader(
+            dataset_test,
+            batch_size=args.tasks_per_metaupdate,
+            shuffle=True,
+            num_workers=args.n_workers,
+        )
+    else:
+        raise Exception("Dataset {} not implemented".format(args.dataset))
+
+    return dataloader_train, dataloader_val, dataloader_test
+
+
 def run_training_loop(
     sampled_batches_train,
     sampled_batches_test,
-    model,
+    model_func,
     lr_meta,
     lr_inner,
     first_order,
     evaluate_every,
+    num_epochs,
     device,
 ):
-    model.to(device=device)
-    model.train()
-    meta_optimizer = torch.optim.SGD(model.parameters(), lr=lr_meta)
+    T = len(sampled_batches_train)
+    test_loss = np.zeros(((T // evaluate_every) + 1, num_epochs))
+    test_acc = np.zeros(((T // evaluate_every) + 1, num_epochs))
 
-    test_loss_list = []
-    test_acc_list = []
-    with tqdm(sampled_batches_train) as pbar:
-        for idx, batch in enumerate(pbar):
+    def evaluate_model(model):
+        temp_loss = []
+        temp_acc = []
+        for batch in sampled_batches_test:
             model.zero_grad()
-
             outer_loss, accuracy = get_outer_loss(
-                batch, model, lr_inner, device, first_order, test=False
+                batch, model, lr_inner, device, first_order, test=True
             )
+            temp_loss.append(outer_loss.squeeze().item())
+            temp_acc.append(accuracy.squeeze().item())
+        return np.array(temp_loss).mean(), np.array(temp_acc).mean()
 
-            outer_loss.backward()
-            meta_optimizer.step()
+    # Every evaluate_every we train the model and evaluate it
+    # This means that we will use train_data[1:t] for each of these t to train
+    for i, t in enumerate(range(0, len(sampled_batches_train) + 1, evaluate_every)):
+        logging.info(
+            "Evaluating model with metatrain instance until index {}".format(t)
+        )
+        if t == 0:
+            model = model_func()
+            model.to(device=device)
+            # Get loss for uninitialised model
+            # This should have accuracy 1/n_way
+            for epoch in range(num_epochs):
+                temp_loss, temp_acc = evaluate_model(model)
+                test_loss[i, epoch] = temp_loss
+                test_acc[i, epoch] = temp_acc
+        else:
+            cur_train_batches = sampled_batches_train[:t]
+            model = model_func()
+            model.to(device=device)
+            model.train()
+            meta_optimizer = torch.optim.Adam(model.parameters(), lr=lr_meta)
 
-            if idx % evaluate_every == 0:
+            for epoch in range(num_epochs):
+                logging.info("Running epoch {}".format(epoch))
+                shuffle(cur_train_batches)
+                with tqdm(cur_train_batches) as pbar:
+                    for idx, batch in enumerate(pbar):
+                        model.zero_grad()
+
+                        outer_loss, accuracy = get_outer_loss(
+                            batch, model, lr_inner, device, first_order, test=False
+                        )
+
+                        outer_loss.backward()
+                        meta_optimizer.step()
+
                 # Get average test loss / acc
-                temp_loss = []
-                temp_acc = []
-                for test_batch in sampled_batches_test:
-                    model.zero_grad()
-                    outer_loss, accuracy = get_outer_loss(
-                        batch, model, lr_inner, device, first_order, test=True
-                    )
-                    temp_loss.append(outer_loss.squeeze().item())
-                    temp_acc.append(accuracy.squeeze().item())
-                test_loss_list.append(np.array(temp_loss).mean())
-                test_acc_list.append(np.array(temp_acc).mean())
+                temp_loss, temp_acc = evaluate_model(model)
+                test_loss[i, epoch] = temp_loss
+                test_acc[i, epoch] = temp_acc
 
-    return test_loss_list, test_acc_list
+    return test_loss, test_acc
 
 
 def run(args):
@@ -124,75 +260,6 @@ def run(args):
     save_path.mkdir(parents=True, exist_ok=True)
     utils.dump_args_to_json(args, save_path)
 
-    # Create dataset
-    if args.dataset == "omniglot":
-        dataset_train = omniglot(
-            folder=args.data_path,
-            shots=args.k_shot,
-            ways=args.n_way,
-            shuffle=True,
-            test_shots=args.k_query,
-            seed=args.seed,
-            meta_train=True,
-            download=True,  # Only downloads if not in data_path
-        )
-        dataloader_train = BatchMetaDataLoader(
-            dataset_train,
-            batch_size=args.tasks_per_metaupdate,
-            shuffle=True,
-            num_workers=args.n_workers,
-        )
-
-        dataset_test = omniglot(
-            folder=args.data_path,
-            shots=args.k_shot,
-            ways=args.n_way,
-            shuffle=True,
-            test_shots=args.k_query,
-            meta_test=True,
-            download=True,
-        )
-        dataloader_test = BatchMetaDataLoader(
-            dataset_test,
-            batch_size=args.tasks_per_metaupdate,
-            shuffle=True,
-            num_workers=args.n_workers,
-        )
-    elif args.dataset == "miniimagenet":
-        dataset_train = miniimagenet(
-            folder=args.data_path,
-            shots=args.k_shot,
-            ways=args.n_way,
-            shuffle=True,
-            test_shots=args.k_query,
-            meta_train=True,
-            download=True,  # Only downloads if not in data_path
-        )
-        dataloader_train = BatchMetaDataLoader(
-            dataset_train,
-            batch_size=args.tasks_per_metaupdate,
-            shuffle=True,
-            num_workers=args.n_workers,
-        )
-
-        dataset_test = omniglot(
-            folder=args.data_path,
-            shots=args.k_shot,
-            ways=args.n_way,
-            shuffle=True,
-            test_shots=args.k_query,
-            meta_test=True,
-            download=download,
-        )
-        dataloader_test = BatchMetaDataLoader(
-            dataset_test,
-            batch_size=args.tasks_per_metaupdate,
-            shuffle=True,
-            num_workers=args.n_workers,
-        )
-    else:
-        raise Exception("Dataset {} not implemented".format(args.dataset))
-
     if args.kernel_function == "mean_linear":
         kernel_mat_func = kernels.mean_embedding_linear_kernel_matrix
     else:
@@ -207,8 +274,7 @@ def run(args):
             "Frank Wolfe algorithm {} not implemented".format(args.frank_wolfe)
         )
 
-    # Keep runs in json
-    runs = {}
+    dataloader_train, dataloader_val, dataloader_test = generate_dataloaders(args)
 
     # And initialise the model we will be using
     if args.model == "cnn":
@@ -230,49 +296,66 @@ def run(args):
     else:
         raise Exception("Please choose cnn or mlp")
 
+    # NOTE: This means we save t=0 and t=end in addition to end of each t
+    _shape = (
+        args.n_runs,
+        (args.n_train_batches // args.evaluate_every) + 1,
+        args.num_epochs,
+    )
+    all_test_loss_uniform = np.zeros(_shape)
+    all_test_acc_uniform = np.zeros(_shape)
+    all_test_loss_fw = np.zeros(_shape)
+    all_test_acc_fw = np.zeros(_shape)
     for run in range(args.n_runs):
         sampled_batches_train = utils.aggregate_sampled_task_batches(
             dataloader_train, args.n_train_batches
         )
-        sampled_batches_test = utils.aggregate_sampled_task_batches(
-            dataloader_test, args.n_train_batches
-        )
         sampled_batches_train_fw = get_active_learning_batches(
             sampled_batches_train, kernel_mat_func, fw_class
         )
-
+        sampled_batches_test = utils.aggregate_sampled_task_batches(
+            dataloader_test, args.n_test_batches
+        )
         test_loss, test_acc = run_training_loop(
             sampled_batches_train,
             sampled_batches_test,
-            get_new_model_instance(),
+            get_new_model_instance,
             args.lr_meta,
             args.lr_inner,
             args.first_order,
             args.evaluate_every,
+            args.num_epochs,
             args.device,
         )
         test_loss_fw, test_acc_fw = run_training_loop(
-            sampled_batches_train,
+            sampled_batches_train_fw,
             sampled_batches_test,
-            get_new_model_instance(),
+            get_new_model_instance,
             args.lr_meta,
             args.lr_inner,
             args.first_order,
             args.evaluate_every,
+            args.num_epochs,
             args.device,
         )
-        runs[str(run)] = {
-            "test_loss_uniform": test_loss,
-            "test_loss_fw": test_loss_fw,
-            "test_acc_uniform": test_acc,
-            "test_acc_fw": test_acc_fw,
-        }
+        all_test_loss_uniform[run, :, :] = test_loss
+        all_test_acc_uniform[run, :, :] = test_acc
+        all_test_loss_fw[run, :, :] = test_loss_fw
+        all_test_acc_fw[run, :, :] = test_acc_fw
         logging.info("run {} out of {} completed".format(run + 1, args.n_runs))
-    utils.dump_runs_to_json(runs, save_path)
+
+    utils.dump_runs_to_npy(
+        all_test_loss_uniform,
+        all_test_acc_uniform,
+        all_test_loss_fw,
+        all_test_acc_fw,
+        save_path,
+    )
 
 
 if __name__ == "__main__":
     logging.info("Reading command line arguments")
     args = arguments.parse_args()
-    logging.info("Entering main point (run())")
+    logging.info("Entering run()")
     run(args)
+    logging.info("Finished successfully")
