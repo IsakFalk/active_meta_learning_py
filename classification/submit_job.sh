@@ -1,15 +1,21 @@
-#$ -l tmem=8GB
-#$ -l h_rt=4:0:0
-
 #$ -S /bin/bash
 #$ -j y
 #$ -N aml_omniglot
 
+#$ -l tmem=8G
+#$ -l h_rt=8:0:0
 #$ -l gpu=true
+#$ -wd /home/jitfalk/stdouterr/
 
 # Scratch for data IO
 #$ -l tscratch=4G
 mkdir -p /scratch0/jitfalk/$JOB_ID
+
+# Log host and date
+hostname
+date
+
+cd /home/jitfalk/active_meta_learning_py/classification
 
 # Run main script
 python main.py --n_runs 5 --n_train_batches 1000 --n_test_batches 100 --tasks_per_metaupdate 16 \
