@@ -14,20 +14,14 @@ def parse_args():
     parser.add_argument(
         "--n_train_batches",
         type=int,
-        default=200,
+        default=1000,
         help="number of batches of metatrain instances",
     )
     parser.add_argument(
         "--n_test_batches",
         type=int,
-        default=50,
+        default=200,
         help="number of batches of metatest instances",
-    )
-    parser.add_argument(
-        "--evaluate_every",
-        type=int,
-        default=10,
-        help="evaluate loss / acc on test set every evaluate_every step",
     )
 
     parser.add_argument("--seed", type=int, default=42)
@@ -37,6 +31,12 @@ def parse_args():
         type=int,
         default=16,
         help="number of tasks in each batch per meta-update",
+    )
+    parser.add_argument(
+        "--evaluate_every",
+        type=int,
+        default=100,
+        help="evaluate the test loss / accuracy every evaluate_every t",
     )
 
     parser.add_argument(
@@ -67,12 +67,6 @@ def parse_args():
         default=0.001,
         help="outer-loop learning rate (used with Adam optimiser)",
     )
-    # parser.add_argument(
-    #     "--lr_meta_decay",
-    #     type=float,
-    #     default=0.9,
-    #     help="decay factor for meta learning rate",
-    # )
     parser.add_argument(
         "--frank_wolfe",
         type=str,
@@ -97,6 +91,12 @@ def parse_args():
         type=int,
         default=1,
         help="number of gradient updates at test time (for evaluation)",
+    )
+    parser.add_argument(
+        "--num_epochs",
+        type=int,
+        default=5,
+        help="number of epochs over the sampled metatrain set (for each t) to sweep over",
     )
 
     parser.add_argument(
@@ -123,18 +123,37 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--num_layers", type=int, default=32, help="number of filters per conv-layer"
+        "--num_layers", type=int, default=3, help="number of hidden layers"
     )
-    parser.add_argument(
-        "--nn_initialisation",
-        type=str,
-        default="zero",
-        help="initialisation type (kaiming, xavier, zero)",
-    )
+    # parser.add_argument(
+    #     "--nn_initialisation",
+    #     type=str,
+    #     default="zero",
+    #     help="initialisation type (kaiming, xavier, zero)",
+    # )
 
     # # Data
     parser.add_argument(
         "--dataset", type=str, default="omniglot", help="dataset to use"
+    )
+    # In order to be able to avoid dataset shift
+    parser.add_argument(
+        "--base_dataset_train",
+        type=str,
+        default="train",
+        help="Base dataset to use to sample train from",
+    )
+    parser.add_argument(
+        "--base_dataset_val",
+        type=str,
+        default="val",
+        help="Base dataset to use to sample val from",
+    )
+    parser.add_argument(
+        "--base_dataset_test",
+        type=str,
+        default="test",
+        help="Base dataset to use to sample test from",
     )
     parser.add_argument(
         "--data_path",
