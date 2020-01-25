@@ -3,22 +3,33 @@ from torchmeta.modules import (MetaModule, MetaSequential, MetaConv2d,
                                MetaBatchNorm2d, MetaLinear)
 from torchmeta.modules.utils import get_subdict
 
+from utils import swish
+
 class MultiLayerPerceptron(MetaModule):
-    def __init__(self, in_dim, out_dim, num_layers=3, hidden_size=64):
+    def __init__(self, in_dim, out_dim, num_layers=3, hidden_size=64, nonlinearity="relu"):
         super(MultiLayerPerceptron, self).__init__()
         self.in_dim = in_dim
         self.hidden_size = hidden_size
         self.out_dim = out_dim
 
+        if nonlinearity == "relu":
+            self.activation = nn.ReLU
+        elif nonlinearity == "swish":
+            self.activation = swish
+        elif nonlinearity == "sigmoid":
+            self.activation = nn.sigmoid
+        else:
+            raise()
+
         self.layer_list = [
             nn.Flatten(),
             nn.Linear(in_dim, hidden_size),
-            nn.ReLU()
+            self.activation()
         ]
         for _ in range(num_layers):
             self.layer_list.extend([
                 nn.Linear(hidden_size, hidden_size),
-                nn.ReLU()
+                self.activation()
             ])
 
         # Should be able to add variable layers
