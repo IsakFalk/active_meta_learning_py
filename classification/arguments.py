@@ -1,16 +1,12 @@
 import argparse
 import torch
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Active Learning for Meta-learning using MMD,"
         "Clasification experiments."
     )
 
-    parser.add_argument(
-        "--n_runs", type=int, default=5, help="number of runs",
-    )
     parser.add_argument(
         "--n_train_batches",
         type=int,
@@ -92,12 +88,6 @@ def parse_args():
         default=1,
         help="number of gradient updates at test time (for evaluation)",
     )
-    parser.add_argument(
-        "--num_epochs",
-        type=int,
-        default=5,
-        help="number of epochs over the sampled metatrain set (for each t) to sweep over",
-    )
 
     parser.add_argument(
         "--first_order",
@@ -169,10 +159,16 @@ def parse_args():
     parser.add_argument(
         "--n_workers", type=int, default=0, help="number of workers to use for CPU"
     )
+    parser.add_argument(
+        "--write_config", type=str, default="", help="where to write config"
+    )
+    
     args = parser.parse_args()
 
     # use the GPU if available
-    args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # This might work a bit iffy on cluster, but not sure how to get this
+    # to run on GPU consistently otherwise
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Running on device: {}".format(args.device))
 
     return args
