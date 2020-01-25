@@ -212,7 +212,7 @@ def run_training_loop(
             temp_loss, temp_acc = evaluate_model(model)
             test_loss.append(temp_loss)
             test_acc.append(temp_acc)
-            logging.info("Test loss / acc: {.4f} / {.4f}".format(temp_loss, temp_acc))
+            logging.info("Test loss / acc: {:.4f} / {:.4f}".format(temp_loss, temp_acc))
 
     return np.array(test_loss), np.array(test_acc)
 
