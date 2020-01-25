@@ -27,7 +27,6 @@ def get_active_learning_batches(sampled_batches_train, kernel_mat_func, fw_class
     return sampled_batches_train_fw
 
 def generate_dataloaders(args):
-    logging.info("Generating dataloaders for dataset {}".format(args.dataset))
     # Create dataset
     if args.dataset == "omniglot":
         dataset_train = omniglot(
@@ -247,7 +246,8 @@ def run(args):
         raise Exception(
             "Frank Wolfe algorithm {} not implemented".format(args.frank_wolfe)
         )
-
+    
+    logging.info("Generating dataloaders for dataset {}".format(args.dataset))
     dataloader_train, dataloader_val, dataloader_test = generate_dataloaders(args)
 
     # And initialise the model we will be using
@@ -270,6 +270,7 @@ def run(args):
     else:
         raise Exception("Please choose cnn or mlp")
 
+    logging.info("Sampling batched datasets")
     sampled_batches_train = utils.aggregate_sampled_task_batches(
         dataloader_train, args.n_train_batches
     )
@@ -279,6 +280,7 @@ def run(args):
     sampled_batches_test = utils.aggregate_sampled_task_batches(
         dataloader_test, args.n_test_batches
     )
+    logging.info("Run training: Uniform")
     test_loss_uniform, test_acc_uniform = run_training_loop(
         sampled_batches_train,
         sampled_batches_test,
@@ -289,6 +291,7 @@ def run(args):
         args.evaluate_every,
         args.device
     )
+    logging.info("Run training: FW")
     test_loss_fw, test_acc_fw = run_training_loop(
         sampled_batches_train_fw,
         sampled_batches_test,
