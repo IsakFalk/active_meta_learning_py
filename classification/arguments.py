@@ -169,6 +169,6 @@ def parse_args():
     # This might work a bit iffy on cluster, but not sure how to get this
     # to run on GPU consistently otherwise
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Running on device: {}".format(args.device))
+    logging.info("Running on device: {}".format(args.device))
 
     return args
