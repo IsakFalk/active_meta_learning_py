@@ -5,6 +5,13 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
+##########
+# Torch  #
+##########
+
+def swish(x):
+    return x * F.sigmoid(x)
+
 ####################
 # Reproducibility  #
 ####################
@@ -135,16 +142,16 @@ def dump_args_to_json(args, save_path):
 
 
 def dump_runs_to_npy(
-    all_test_loss_uniform,
-    all_test_acc_uniform,
-    all_test_loss_fw,
-    all_test_acc_fw,
+    test_loss_uniform,
+    test_acc_uniform,
+    test_loss_fw,
+    test_acc_fw,
     save_path,
 ):
-    np.save(save_path / "test_loss_uniform.npy", all_test_loss_uniform)
-    np.save(save_path / "test_acc_uniform.npy", all_test_acc_uniform)
-    np.save(save_path / "test_loss_fw.npy", all_test_loss_fw)
-    np.save(save_path / "test_acc_fw.npy", all_test_acc_fw)
+    np.save(save_path / "test_loss_uniform.npy", test_loss_uniform)
+    np.save(save_path / "test_acc_uniform.npy", test_acc_uniform)
+    np.save(save_path / "test_loss_fw.npy", test_loss_fw)
+    np.save(save_path / "test_acc_fw.npy", test_acc_fw)
 
 
 def dump_runs_to_json(runs_dict, save_path):
