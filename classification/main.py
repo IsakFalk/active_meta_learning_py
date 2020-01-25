@@ -27,6 +27,7 @@ def get_active_learning_batches(sampled_batches_train, kernel_mat_func, fw_class
     return sampled_batches_train_fw
 
 def generate_dataloaders(args):
+    logging.info("Generating dataloaders for dataset {}".format(args.dataset))
     # Create dataset
     if args.dataset == "omniglot":
         dataset_train = omniglot(
@@ -197,6 +198,7 @@ def run_training_loop(
     model.train()
     meta_optimizer = torch.optim.Adam(model.parameters(), lr=lr_meta)
     for idx, batch in enumerate(sampled_batches_train):
+        logging.info("Train task batch: {}".format(idx))
         model.zero_grad()
         outer_loss, accuracy = get_outer_loss(
             batch, model, lr_inner, device, first_order, test=False
@@ -210,6 +212,7 @@ def run_training_loop(
             temp_loss, temp_acc = evaluate_model(model)
             test_loss.append(temp_loss)
             test_acc.append(temp_acc)
+            logging.info("Test loss / acc: {.4f} / {.4f}".format(temp_loss, temp_acc))
 
     return np.array(test_loss), np.array(test_acc)
 
