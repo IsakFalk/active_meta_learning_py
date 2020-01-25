@@ -270,13 +270,15 @@ def run(args):
     else:
         raise Exception("Please choose cnn or mlp")
 
-    logging.info("Sampling batched datasets")
+    logging.info("Sampling batched train datasets")
     sampled_batches_train = utils.aggregate_sampled_task_batches(
         dataloader_train, args.n_train_batches
     )
+    loggin.info("Generating fw train batch order")
     sampled_batches_train_fw = get_active_learning_batches(
         sampled_batches_train, kernel_mat_func, fw_class
     )
+    logging.info("Sampling batched test datasets")
     sampled_batches_test = utils.aggregate_sampled_task_batches(
         dataloader_test, args.n_test_batches
     )
