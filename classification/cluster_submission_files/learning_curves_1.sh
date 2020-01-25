@@ -1,7 +1,7 @@
 #$ -S /bin/bash
 #$ -j y
 #$ -N aml_omniglot
-#$ -t 1-15
+#$ -t 1-2
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning
 
 #$ -l tmem=8G
@@ -12,7 +12,7 @@
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 DATA_DIR=$PROJECT_DIR/data/
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_omniglot_kh
-mkdir SAVE_DIR
+mkdir $SAVE_DIR
 
 N_TRAIN_BATCHES=1000
 N_TEST_BATCHES=100
@@ -54,15 +54,12 @@ hostname
 date
 
 # Only write config once
-if [ $SGE_TASK_ID -eq 1 ]
+if [ "$SGE_TASK_ID" -eq "1" ]
 then
     WRITE_CONFIG=yes
 else
     WRITE_CONFIG=no
 fi
-
-# Get into project dir
-cd /home/jitfalk/active_meta_learning_py/classification
 
 # Run it with seed specified by task id
 # NOTE: If you want to specify first order,

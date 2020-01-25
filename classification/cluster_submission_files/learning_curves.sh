@@ -2,6 +2,7 @@
 #$ -j y
 #$ -N aml_omniglot
 #$ -t 1-10
+#$ -wd /cluster/project9/MMD_FW_active_meta_learning
 
 #$ -l tmem=8G
 #$ -l h_vmem=8G
