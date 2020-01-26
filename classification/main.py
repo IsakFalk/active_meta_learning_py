@@ -291,7 +291,7 @@ def run(args):
     sampled_batches_train = utils.aggregate_sampled_task_batches(
         dataloader_train, args.n_train_batches
     )
-    loggin.info("Generating fw train batch order")
+    logging.info("Generating fw train batch order")
     with torch.no_grad():
         sampled_batches_train_fw = get_active_learning_batches(
             sampled_batches_train, kernel_mat_func, fw_class
