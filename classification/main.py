@@ -138,6 +138,7 @@ def get_outer_loss(batch, model, lr_inner, device, first_order, test=False):
         _model = pickle.loads(pickle.dumps(model))
     else:
         _model = model
+    _model.to(device)
 
     train_inputs, train_targets = batch["train"]
     train_inputs = train_inputs.to(device=device)
@@ -147,9 +148,14 @@ def get_outer_loss(batch, model, lr_inner, device, first_order, test=False):
     test_inputs, test_targets = batch["test"]
     test_inputs = test_inputs.to(device=device)
     test_targets = test_targets.to(device=device)
+    if test:
+        with torch.no_grad():
+            outer_loss = torch.tensor(0.0, device=device)
+            accuracy = torch.tensor(0.0, device=device)
+    else:
+        outer_loss = torch.tensor(0.0, device=device)
+        accuracy = torch.tensor(0.0, device=device)
 
-    outer_loss = torch.tensor(0.0, device=device)
-    accuracy = torch.tensor(0.0, device=device)
     for task_idx, (train_input, train_target, test_input, test_target) in enumerate(
         zip(train_inputs, train_targets, test_inputs, test_targets)
     ):
@@ -160,14 +166,25 @@ def get_outer_loss(batch, model, lr_inner, device, first_order, test=False):
         params = update_parameters(
             _model, inner_loss, step_size=lr_inner, first_order=first_order
         )
-
-        test_logit = _model(test_input, params=params)
-        outer_loss += F.cross_entropy(test_logit, test_target, reduction="mean")
-
+        if test:
+            with torch.no_grad():
+                test_logit = _model(test_input, params=params)
+                outer_loss += F.cross_entropy(test_logit, test_target, reduction="mean")
+        else:
+            test_logit = _model(test_input, params=params)
+            outer_loss += F.cross_entropy(test_logit, test_target, reduction="mean")
         with torch.no_grad():
             accuracy += get_accuracy(test_logit, test_target)
 
-    return outer_loss.div_(batch_size), accuracy.div_(batch_size)
+    # clean up if in evaluation mode
+    return_loss = outer_loss.div_(batch_size).item()
+    return_acc = accuracy.div_(batch_size).item()
+    if test:
+        del _model
+        del outer_loss
+        del accuracy
+
+    return return_loss, return_acc
 
 def run_training_loop(
     sampled_batches_train,
@@ -275,9 +292,10 @@ def run(args):
         dataloader_train, args.n_train_batches
     )
     loggin.info("Generating fw train batch order")
-    sampled_batches_train_fw = get_active_learning_batches(
-        sampled_batches_train, kernel_mat_func, fw_class
-    )
+    with torch.no_grad():
+        sampled_batches_train_fw = get_active_learning_batches(
+            sampled_batches_train, kernel_mat_func, fw_class
+        )
     logging.info("Sampling batched test datasets")
     sampled_batches_test = utils.aggregate_sampled_task_batches(
         dataloader_test, args.n_test_batches

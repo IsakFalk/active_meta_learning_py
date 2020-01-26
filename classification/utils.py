@@ -37,7 +37,6 @@ def set_seed(seed, cudnn=True):
 # Get dataloader data into fw form #
 ####################################
 
-
 def aggregate_sampled_task_batches(dataloader, num_batches):
     """
     Get num_batches batch of tasks from dataloader.
