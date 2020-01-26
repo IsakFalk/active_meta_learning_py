@@ -13,7 +13,7 @@ SGE_TASK_ID=1
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 DATA_DIR=$PROJECT_DIR/data/
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_omniglot_kh
-mkdir $SAVE_DIR
+mkdir -p $SAVE_DIR
 
 N_TRAIN_BATCHES=500
 N_TEST_BATCHES=50

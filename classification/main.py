@@ -177,12 +177,10 @@ def get_outer_loss(batch, model, lr_inner, device, first_order, test=False):
             accuracy += get_accuracy(test_logit, test_target)
 
     # clean up if in evaluation mode
-    return_loss = outer_loss.div_(batch_size).item()
-    return_acc = accuracy.div_(batch_size).item()
+    return_loss = outer_loss.div_(batch_size)
+    return_acc = accuracy.div_(batch_size)
     if test:
         del _model
-        del outer_loss
-        del accuracy
 
     return return_loss, return_acc
 
@@ -222,6 +220,9 @@ def run_training_loop(
 
         outer_loss.backward()
         meta_optimizer.step()
+
+        del outer_loss
+        del accuracy
                 
         if idx % evaluate_every == 0:
             # Get average test loss / acc
