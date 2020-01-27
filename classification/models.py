@@ -3,41 +3,23 @@ from torchmeta.modules import (MetaModule, MetaSequential, MetaConv2d,
                                MetaBatchNorm2d, MetaLinear)
 from torchmeta.modules.utils import get_subdict
 
-from utils import swish
 
 class MultiLayerPerceptron(MetaModule):
-    def __init__(self, in_dim, out_dim, num_layers=3, hidden_size=64, nonlinearity="relu"):
+    def __init__(self, in_dim, out_dim, hidden_dim=64):
         super(MultiLayerPerceptron, self).__init__()
         self.in_dim = in_dim
-        self.hidden_size = hidden_size
+        self.hidden_dim = hidden_dim
         self.out_dim = out_dim
 
-        if nonlinearity == "relu":
-            self.activation = nn.ReLU
-        elif nonlinearity == "swish":
-            self.activation = swish
-        elif nonlinearity == "sigmoid":
-            self.activation = nn.sigmoid
-        else:
-            raise()
-
-        self.layer_list = [
-            nn.Flatten(),
-            nn.Linear(in_dim, hidden_size),
-            self.activation()
-        ]
-        for _ in range(num_layers):
-            self.layer_list.extend([
-                nn.Linear(hidden_size, hidden_size),
-                self.activation()
-            ])
-
-        # Should be able to add variable layers
         self.features = MetaSequential(
-            *self.layer_list
+            fc1=nn.Linear(in_dim, hidden_dim),
+            relu1=nn.ReLU(),
+            fc2=nn.Linear(hidden_dim, hidden_dim),
+            relu2=nn.ReLU(),
+            fc3=nn.Linear(hidden_dim, hidden_dim)
         )
 
-        self.classifier = MetaLinear(hidden_size, out_dim)
+        self.classifier = MetaLinear(hidden_dim, out_dim)
 
     def forward(self, inputs, params=None):
         features = self.features(inputs, params=get_subdict(params, 'features'))
@@ -54,7 +36,7 @@ def conv3x3(in_channels, out_channels, **kwargs):
     )
 
 class ConvolutionalNeuralNetwork(MetaModule):
-    def __init__(self, in_channels, out_features, num_layers=3, hidden_size=64):
+    def __init__(self, in_channels, out_features, hidden_size=64):
         super(ConvolutionalNeuralNetwork, self).__init__()
         self.in_channels = in_channels
         self.out_features = out_features
