@@ -32,11 +32,7 @@ KERNEL_FUNCTION=mean_linear
 
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
-
-MODEL=cnn
 NUM_FILTERS=32
-HIDDEN_SIZE=64
-NUM_LAYERS=3
 
 DATASET=omniglot
 BASE_DATASET_TRAIN=train
@@ -79,11 +75,7 @@ python3 main.py \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
-        --first_order $FIRST_ORDER \
-        --model $MODEL \
-        --num_filters $NUM_FILTERS \
-        --hidden_size $HIDDEN_SIZE \
-        --num_layers $NUM_LAYERS \
+        --num_filters $NUM_FILTERS
         --dataset $DATASET \
         --base_dataset_train $BASE_DATASET_TRAIN \
         --base_dataset_val $BASE_DATASET_VAL \

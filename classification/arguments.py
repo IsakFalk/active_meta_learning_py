@@ -3,6 +3,7 @@ import logging
 
 import torch
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Active Learning for Meta-learning using MMD,"
@@ -95,7 +96,7 @@ def parse_args():
         "--first_order",
         action="store_true",
         default=False,
-        help="run first order approximation of CAVIA",
+        help="run first order approximation of MAML",
     )
 
     # # network architecture
@@ -142,9 +143,12 @@ def parse_args():
         "--n_workers", type=int, default=0, help="number of workers to use for CPU"
     )
     parser.add_argument(
-        "--write_config", type=str, default="", help="Whether to write config file (used for cluster management)"
+        "--write_config",
+        type=str,
+        default="",
+        help="Whether to write config file (used for cluster management)",
     )
-    
+
     args = parser.parse_args()
 
     # use the GPU if available
