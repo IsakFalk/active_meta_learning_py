@@ -1,11 +1,10 @@
 #$ -S /bin/bash
 #$ -j y
 #$ -N aml_omniglot
-#$ -t 1-2
+#$ -t 1-10
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning
 
 #$ -l tmem=8G
-#$ -l h_vmem=8G
 #$ -l h_rt=8:0:0
 #$ -l gpu=true
 
@@ -32,10 +31,7 @@ KERNEL_FUNCTION=mean_linear
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
 
-MODEL=cnn
 NUM_FILTERS=32
-HIDDEN_SIZE=64
-NUM_LAYERS=3
 
 DATASET=omniglot
 BASE_DATASET_TRAIN=train
@@ -90,6 +86,6 @@ python3 main.py \
         --data_path $DATA_PATH \
         --save_path $SAVE_PATH \
         --n_workers $N_WORKERS \
-        --write_config $WRITE_CONFIG \
+        --write_config $WRITE_CONFIG
 
 date

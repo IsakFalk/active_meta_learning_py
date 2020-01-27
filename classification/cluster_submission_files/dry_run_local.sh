@@ -1,22 +1,26 @@
-#$ -S /bin/bash
-#$ -j y
-#$ -N aml_omniglot
-#$ -t 1-10
-#$ -wd /cluster/project9/MMD_FW_active_meta_learning
+# Use this to test / dry run your jobs
+# Essentially running the code you would do
+# with `qsub` by running `qrsh -t` with
+# whatever -t options you have defined there
+# Remove any scheduler directive lines,
+# the ones starting with `#$`.
 
-#$ -l tmem=8G
-#$ -l h_rt=8:0:0
-#$ -l gpu=true
+# Dummy variables, these will be set by the scheduler
+# when running `qsub`
+JOB_ID=TEST
+SGE_TASK_ID=1
 
-PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
+PROJECT_DIR=~/life/references/projects/phd/active_meta_learning/src/active_meta_learning_py/active_meta_learning
 DATA_DIR=$PROJECT_DIR/data/
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_omniglot_kh
-mkdir $SAVE_DIR
+mkdir -p $SAVE_DIR
 
-N_TRAIN_BATCHES=3000
-N_TEST_BATCHES=100
-TASKS_PER_METAUPDATE=16
-EVALUATE_EVERY=10
+echo $DATA_DIR
+
+N_TRAIN_BATCHES=5
+N_TEST_BATCHES=2
+TASKS_PER_METAUPDATE=4
+EVALUATE_EVERY=1
 
 N_WAY=5
 K_SHOT=1
@@ -30,7 +34,6 @@ KERNEL_FUNCTION=mean_linear
 
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
-
 NUM_FILTERS=32
 
 DATASET=omniglot
@@ -40,9 +43,6 @@ BASE_DATASET_TEST=test
 DATA_PATH=$DATA_DIR
 SAVE_PATH=$SAVE_DIR
 N_WORKERS=0
-
-# Remember to also export the path to the libraries and software needed, example
-source $PROJECT_DIR/project_environment.source
 
 # Log host and date
 hostname
@@ -74,11 +74,7 @@ python3 main.py \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
-        --first_order $FIRST_ORDER \
-        --model $MODEL \
         --num_filters $NUM_FILTERS \
-        --hidden_size $HIDDEN_SIZE \
-        --num_layers $NUM_LAYERS \
         --dataset $DATASET \
         --base_dataset_train $BASE_DATASET_TRAIN \
         --base_dataset_val $BASE_DATASET_VAL \

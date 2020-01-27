@@ -75,7 +75,7 @@ python3 main.py \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
-        --num_filters $NUM_FILTERS
+        --num_filters $NUM_FILTERS \
         --dataset $DATASET \
         --base_dataset_train $BASE_DATASET_TRAIN \
         --base_dataset_val $BASE_DATASET_VAL \
@@ -83,6 +83,6 @@ python3 main.py \
         --data_path $DATA_PATH \
         --save_path $SAVE_PATH \
         --n_workers $N_WORKERS \
-        --write_config $WRITE_CONFIG \
+        --write_config $WRITE_CONFIG
 
 date

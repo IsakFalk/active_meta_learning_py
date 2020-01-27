@@ -14,7 +14,7 @@ SAVE_DIR=$PROJECT_DIR/experiments/learning_curves
 N_TRAIN_BATCHES=5000
 n_test_batches=200
 tasks_per_metaupdate=16
-evaluate_every=10
+evaluate_every=50
 
 n_way=5
 k_shot=1
