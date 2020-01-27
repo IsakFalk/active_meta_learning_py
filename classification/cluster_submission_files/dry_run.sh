@@ -47,8 +47,7 @@ SAVE_PATH=$SAVE_DIR
 N_WORKERS=0
 
 # Remember to also export the path to the libraries and software needed, example
-export PATH=/share/apps/python-3.7.2-shared/bin:$PATH
-export LD_LIBRARY_PATH=/share/apps/python-3.7.2-shared/lib:$LD_LIBRARY_PATH
+source $PROJECT_DIR/project_environment.source
 
 # Log host and date
 hostname
