@@ -207,7 +207,7 @@ def run_training_loop(
             temp_loss.append(outer_loss.squeeze().item())
             temp_acc.append(accuracy.squeeze().item())
         return np.array(temp_loss).mean(), np.array(temp_acc).mean()
-
+    
     model.to(device=device)
     model.train()
     meta_optimizer = torch.optim.Adam(model.parameters(), lr=lr_meta)
