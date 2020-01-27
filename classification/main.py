@@ -78,6 +78,7 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
     device = args.device
     first_order = args.first_order
     evaluate_every = args.evaluate_every
+    num_grad_steps_inner = args.num_grad_steps_inner
 
     test_loss = []
     test_acc = []
@@ -101,7 +102,8 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
         outer_loss, accuracy = get_outer_loss(batch, model, args, test=False)
 
         outer_loss.backward()
-        meta_optimizer.step()
+        for _ in range(num_grad_steps_inner):
+            meta_optimizer.step()
 
         del outer_loss
         del accuracy
