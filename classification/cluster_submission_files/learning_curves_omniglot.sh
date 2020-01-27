@@ -2,7 +2,7 @@
 #$ -j y
 #$ -N aml_omniglot
 # #$ -t 1-10
-#$ -wd /cluster/project9/MMD_FW_active_meta_learning
+#$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/classification
 
 #$ -l tmem=8G
 #$ -l h_rt=8:0:0
