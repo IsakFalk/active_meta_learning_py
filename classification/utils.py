@@ -3,14 +3,18 @@ import json
 
 import torch
 import torch.nn.functional as F
+from torchmeta.datasets.helpers import omniglot, miniimagenet
+from torchmeta.utils.data import BatchMetaDataLoader
 import numpy as np
 
 ##########
 # Torch  #
 ##########
 
+
 def swish(x):
     return x * F.sigmoid(x)
+
 
 ####################
 # Reproducibility  #
@@ -36,6 +40,7 @@ def set_seed(seed, cudnn=True):
 ####################################
 # Get dataloader data into fw form #
 ####################################
+
 
 def aggregate_sampled_task_batches(dataloader, num_batches):
     """
@@ -128,6 +133,107 @@ def convert_batches_to_fw_form(sampled_batches):
         return np.stack(sampled_batches)
 
 
+########
+# Main #
+########
+
+
+def get_active_learning_batches(sampled_batches_train, kernel_mat_func, fw_class):
+    fw_batches_train = convert_batches_to_fw_form(sampled_batches_train)
+    K = kernel_mat_func(fw_batches_train)
+    fw = fw_class(K)
+    fw.run()
+    sampled_batches_train_fw = [sampled_batches_train[i] for i in fw.sampled_order]
+    return sampled_batches_train_fw
+
+
+def generate_dataloaders(args):
+    # Create dataset
+    if args.dataset == "omniglot":
+        dataset_train = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_train,
+            seed=args.seed,
+            download=True,  # Only downloads if not in data_path
+        )
+        dataset_val = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_val,
+            seed=args.seed,
+            download=True,
+        )
+        dataset_test = omniglot(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_test,
+            download=True,
+        )
+    elif args.dataset == "miniimagenet":
+        dataset_train = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_train,
+            seed=args.seed,
+            download=True,  # Only downloads if not in data_path
+        )
+        dataset_val = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_val,
+            seed=args.seed,
+            download=True,
+        )
+        dataset_test = miniimagenet(
+            folder=args.data_path,
+            shots=args.k_shot,
+            ways=args.n_way,
+            shuffle=True,
+            test_shots=args.k_query,
+            meta_split=args.base_dataset_test,
+            download=True,
+        )
+    else:
+        raise Exception("Dataset {} not implemented".format(args.dataset))
+
+    dataloader_train = BatchMetaDataLoader(
+        dataset_train,
+        batch_size=args.tasks_per_metaupdate,
+        shuffle=True,
+        num_workers=args.n_workers,
+    )
+    dataloader_val = BatchMetaDataLoader(
+        dataset_val,
+        batch_size=args.tasks_per_metaupdate,
+        shuffle=True,
+        num_workers=args.n_workers,
+    )
+    dataloader_test = BatchMetaDataLoader(
+        dataset_test,
+        batch_size=args.tasks_per_metaupdate,
+        shuffle=True,
+        num_workers=args.n_workers,
+    )
+
+    return dataloader_train, dataloader_val, dataloader_test
+
+
 ###########################
 # Create config from args #
 ###########################
@@ -142,11 +248,7 @@ def dump_args_to_json(args, save_path):
 
 
 def dump_runs_to_npy(
-    test_loss_uniform,
-    test_acc_uniform,
-    test_loss_fw,
-    test_acc_fw,
-    save_path,
+    test_loss_uniform, test_acc_uniform, test_loss_fw, test_acc_fw, save_path,
 ):
     np.save(save_path / "test_loss_uniform.npy", test_loss_uniform)
     np.save(save_path / "test_acc_uniform.npy", test_acc_uniform)

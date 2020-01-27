@@ -99,30 +99,10 @@ def parse_args():
     )
 
     # # network architecture
-    parser.add_argument(
-        "--model", type=str, default="cnn", help="model to use",
-    )
     # CNN
     parser.add_argument(
         "--num_filters", type=int, default=32, help="number of filters per conv-layer"
     )
-    # MLP
-    parser.add_argument(
-        "--hidden_size",
-        type=int,
-        default=64,
-        help="number of hidden units per layer in MLP",
-    )
-
-    parser.add_argument(
-        "--num_layers", type=int, default=3, help="number of hidden layers"
-    )
-    # parser.add_argument(
-    #     "--nn_initialisation",
-    #     type=str,
-    #     default="zero",
-    #     help="initialisation type (kaiming, xavier, zero)",
-    # )
 
     # # Data
     parser.add_argument(
@@ -162,7 +142,7 @@ def parse_args():
         "--n_workers", type=int, default=0, help="number of workers to use for CPU"
     )
     parser.add_argument(
-        "--write_config", type=str, default="", help="where to write config"
+        "--write_config", type=str, default="", help="Whether to write config file (used for cluster management)"
     )
     
     args = parser.parse_args()
