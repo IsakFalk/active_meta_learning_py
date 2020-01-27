@@ -10,7 +10,7 @@
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 DATA_DIR=$PROJECT_DIR/data/
-SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_omniglot_kh
+SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_miniimagenet_kh
 mkdir $SAVE_DIR
 
 N_TRAIN_BATCHES=10000
@@ -22,7 +22,7 @@ N_WAY=5
 K_SHOT=1
 K_QUERY=15
 
-LR_INNER=0.5
+LR_INNER=0.4
 LR_META=0.001
 
 FRANK_WOLFE=kernel_herding
@@ -31,7 +31,7 @@ KERNEL_FUNCTION=mean_linear
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
 
-NUM_FILTERS=64
+NUM_FILTERS=32
 
 DATASET=omniglot
 BASE_DATASET_TRAIN=train
@@ -65,7 +65,7 @@ python3 main.py \
         --seed $SGE_TASK_ID \
         --tasks_per_metaupdate $TASKS_PER_METAUPDATE \
         --evaluate_every $EVALUATE_EVERY \
-        --n_way $N_WAY \
+p        --n_way $N_WAY \
         --k_shot $K_SHOT \
         --k_query $K_QUERY \
         --lr_inner $LR_INNER \
