@@ -119,12 +119,13 @@ def convert_batches_to_np(sampled_batches):
 
 
 def convert_batches_to_fw_form(sampled_batches):
-    sampled_batches = coalesce_train_and_test_in_dicts(sampled_batches)
-    # sampled_batches = coalesce_X_and_y_in_dicts(sampled_batches)
-    sampled_batches = make_X_to_D(sampled_batches)
-    sampled_batches = remove_batched_dimension_in_D(sampled_batches)
-    sampled_batches = convert_batches_to_np(sampled_batches)
-    return np.stack(sampled_batches)
+    with torch.no_grad():
+        sampled_batches = coalesce_train_and_test_in_dicts(sampled_batches)
+        # sampled_batches = coalesce_X_and_y_in_dicts(sampled_batches)
+        sampled_batches = make_X_to_D(sampled_batches)
+        sampled_batches = remove_batched_dimension_in_D(sampled_batches)
+        sampled_batches = convert_batches_to_np(sampled_batches)
+        return np.stack(sampled_batches)
 
 
 ###########################
