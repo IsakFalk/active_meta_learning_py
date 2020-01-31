@@ -167,3 +167,5 @@ dmypy.json
 
 /**/data/*
 /**/data/**/*
+/**/experiments/**/*
+/**/experiments/*
