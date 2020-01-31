@@ -1,23 +1,22 @@
 #$ -S /bin/bash
 #$ -j y
-#$ -N aml_omniglot
+#$ -N aml_sine
 #$ -t 1-5
-#$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/classification
+#$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/regression
 
 #$ -l tmem=20G
 #$ -l h_rt=10:0:0
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
-DATA_DIR=$PROJECT_DIR/data/
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
 mkdir $SAVE_DIR
 
 N_TRAIN_BATCHES=5000
-N_TEST_BATCHES=200
+N_TEST_BATCHES=500
 TASKS_PER_METAUPDATE=1
-EVALUATE_EVERY=50
+EVALUATE_EVERY=20
 
-K_SHOT=5
+K_SHOT=10
 K_QUERY=15
 
 LR_INNER=0.01
@@ -32,7 +31,6 @@ NUM_GRAD_STEPS_EVAL=1
 HIDDEN_DIM=40
 DATASET=sine
 
-DATA_PATH=$DATA_DIR
 SAVE_PATH=$SAVE_DIR
 N_WORKERS=0
 
@@ -68,9 +66,8 @@ python3 main.py \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
-        --num_filters $NUM_FILTERS \
+        --hidden_dim $HIDDEN_DIM \
         --dataset $DATASET
-        --data_path $DATA_PATH \
         --save_path $SAVE_PATH \
         --n_workers $N_WORKERS \
         --write_config $WRITE_CONFIG
