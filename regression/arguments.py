@@ -106,12 +106,6 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="sine", help="dataset to use")
     # In order to be able to avoid dataset shift
     parser.add_argument(
-        "--data_path",
-        type=str,
-        default="./data",
-        help="folder which contains image data",
-    )
-    parser.add_argument(
         "--save_path", type=str, default=".", help="folder to save resulting data",
     )
 
