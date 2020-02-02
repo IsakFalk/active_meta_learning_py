@@ -4,9 +4,10 @@
 # #$ -t 1-5
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/regression
 
-#$ -l tmem=20G
+#$ -l tmem=2G
 #$ -l h_rt=10:0:0
 
+SGE_TASK_ID=1
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
 mkdir $SAVE_DIR

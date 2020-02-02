@@ -1,13 +1,13 @@
-# Use this to test / dry run your jobs
-# Essentially running the code you would do
-# with `qsub` by running `qrsh -t` with
-# whatever -t options you have defined there
-# Remove any scheduler directive lines,
-# the ones starting with `#$`.
+#$ -S /bin/bash
+#$ -j y
+#$ -N aml_omniglot
+# #$ -t 1-5
+#$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/classification
 
-# Dummy variables, these will be set by the scheduler
-# when running `qsub`
-JOB_ID=TEST
+#$ -l tmem=2G
+#$ -l h_rt=10:0:0
+#$ -l gpu=true
+
 SGE_TASK_ID=1
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
@@ -15,10 +15,10 @@ DATA_DIR=$PROJECT_DIR/data/
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_cnn_omniglot_kh
 mkdir -p $SAVE_DIR
 
-N_TRAIN_BATCHES=1000
-N_TEST_BATCHES=50
-TASKS_PER_METAUPDATE=16
-EVALUATE_EVERY=50
+N_TRAIN_BATCHES=10
+N_TEST_BATCHES=2
+TASKS_PER_METAUPDATE=2
+EVALUATE_EVERY=5
 
 N_WAY=5
 K_SHOT=1
