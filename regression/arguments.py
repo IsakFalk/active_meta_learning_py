@@ -58,10 +58,13 @@ def parse_args():
         help="inner-loop learning rate (per task)",
     )
     parser.add_argument(
-        "--lr_meta",
-        type=float,
-        default=0.001,
-        help="outer-loop learning rate (used with Adam optimiser)",
+        "--lr_meta", type=float, default=0.001, help="outer-loop learning rate",
+    )
+    parser.add_argument(
+        "--meta_optimizer",
+        type=str,
+        default="adam",
+        help="optimizer to use for meta loop",
     )
     parser.add_argument(
         "--frank_wolfe",
@@ -87,6 +90,12 @@ def parse_args():
         type=int,
         default=1,
         help="number of gradient updates at test time (for evaluation)",
+    )
+    parser.add_argument(
+        "--num_grad_steps_meta",
+        type=int,
+        default=1,
+        help="number of gradient updates for meta optimiser",
     )
 
     parser.add_argument(

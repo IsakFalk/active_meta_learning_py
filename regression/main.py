@@ -20,6 +20,7 @@ def get_outer_loss(batch, model, args, test=False):
     lr_inner = args.lr_inner
     device = args.device
     first_order = args.first_order
+    num_grad_steps_inner = args.num_grad_steps_inner
 
     if test:
         _model = pickle.loads(pickle.dumps(model))
@@ -48,9 +49,10 @@ def get_outer_loss(batch, model, args, test=False):
         inner_loss = F.mse_loss(train_output, train_target.float(), reduction="mean")
 
         _model.zero_grad()
-        params = update_parameters(
-            _model, inner_loss, step_size=lr_inner, first_order=first_order
-        )
+        for _ in range(num_grad_steps_inner):
+            params = update_parameters(
+                _model, inner_loss, step_size=lr_inner, first_order=first_order
+            )
         if test:
             with torch.no_grad():
                 test_output = _model(test_input.float(), params=params)
@@ -76,6 +78,7 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
     first_order = args.first_order
     evaluate_every = args.evaluate_every
     num_grad_steps_inner = args.num_grad_steps_inner
+    num_grad_steps_meta = args.num_grad_steps_meta
 
     test_loss = []
 
@@ -89,12 +92,19 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
 
     model.to(device=device)
     model.train()
-    meta_optimizer = torch.optim.Adam(model.parameters(), lr=lr_meta)
+    if args.meta_optimizer == "adam":
+        meta_optimizer = torch.optim.Adam(model.parameters(), lr=lr_meta)
+    elif args.meta_optimizer == "sgd":
+        meta_optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.0)
+    else:
+        raise Exception(
+            "Optimizer {} not implemented".format(args.kernel_meta_optimizer)
+        )
     for idx, batch in enumerate(sampled_batches_train):
         model.zero_grad()
         outer_loss = get_outer_loss(batch, model, args, test=False)
         outer_loss.backward()
-        for _ in range(num_grad_steps_inner):
+        for _ in range(num_grad_steps_meta):
             meta_optimizer.step()
 
         del outer_loss

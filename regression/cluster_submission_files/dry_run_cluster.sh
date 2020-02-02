@@ -9,24 +9,26 @@
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
-mkdir -p $SAVE_DIR
+mkdir $SAVE_DIR
 
-N_TRAIN_BATCHES=100
-N_TEST_BATCHES=10
+N_TRAIN_BATCHES=50
+N_TEST_BATCHES=20
 TASKS_PER_METAUPDATE=1
-EVALUATE_EVERY=50
+EVALUATE_EVERY=10
 
-K_SHOT=5
+K_SHOT=10
 K_QUERY=15
 
-LR_INNER=0.01
-LR_META=0.001
+LR_INNER=0.5
+LR_META=0.4
+META_OPTIMIZER=sgd
 
 FRANK_WOLFE=kernel_herding
 KERNEL_FUNCTION=double_gaussian_kernel
 
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
+NUM_GRAD_STEPS_META=5
 
 HIDDEN_DIM=40
 DATASET=sine
@@ -62,10 +64,12 @@ python3 main.py \
         --k_query $K_QUERY \
         --lr_inner $LR_INNER \
         --lr_meta $LR_META \
+        --meta_optimizer $META_OPTIMIZER \
         --frank_wolfe $FRANK_WOLFE \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
+        --num_grad_steps_meta $NUM_GRAD_STEPS_META \
         --hidden_dim $HIDDEN_DIM \
         --dataset $DATASET \
         --save_path $SAVE_PATH \

@@ -12,21 +12,23 @@ SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
 mkdir $SAVE_DIR
 
 N_TRAIN_BATCHES=5000
-N_TEST_BATCHES=500
+N_TEST_BATCHES=200
 TASKS_PER_METAUPDATE=1
-EVALUATE_EVERY=20
+EVALUATE_EVERY=100
 
 K_SHOT=10
 K_QUERY=15
 
-LR_INNER=0.01
-LR_META=0.001
+LR_INNER=0.5
+LR_META=0.4
+META_OPTIMIZER=sgd
 
 FRANK_WOLFE=kernel_herding
 KERNEL_FUNCTION=double_gaussian_kernel
 
 NUM_GRAD_STEPS_INNER=1
 NUM_GRAD_STEPS_EVAL=1
+NUM_GRAD_STEPS_META=5
 
 HIDDEN_DIM=40
 DATASET=sine
@@ -62,12 +64,14 @@ python3 main.py \
         --k_query $K_QUERY \
         --lr_inner $LR_INNER \
         --lr_meta $LR_META \
+        --meta_optimizer $META_OPTIMIZER \
         --frank_wolfe $FRANK_WOLFE \
         --kernel_function $KERNEL_FUNCTION \
         --num_grad_steps_inner $NUM_GRAD_STEPS_INNER \
         --num_grad_steps_eval $NUM_GRAD_STEPS_EVAL \
+        --num_grad_steps_meta $NUM_GRAD_STEPS_META \
         --hidden_dim $HIDDEN_DIM \
-        --dataset $DATASET
+        --dataset $DATASET \
         --save_path $SAVE_PATH \
         --n_workers $N_WORKERS \
         --write_config $WRITE_CONFIG
