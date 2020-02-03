@@ -30,12 +30,11 @@ def get_outer_loss(batch, model, args, test=False):
             feature_dim
         )
         w = torch.inverse(C) @ train_phi_input.t() @ train_target
-        w.to(device=device)
         assert w.shape == (feature_dim, 1)
         pred_target = test_phi_input @ w
-        pred_target.to(device=device)
+        pred_target
         outer_loss += torch.sum((pred_target - test_target) ** 2) / n_test
-        return outer_loss.to_device()
+        return outer_loss
 
     if test:
         _model = pickle.loads(pickle.dumps(model))
@@ -67,21 +66,21 @@ def get_outer_loss(batch, model, args, test=False):
         if test:
             with torch.no_grad():
                 return_loss = get_lin_reg_test_loss(
-                    model,
-                    train_phi_input,
-                    train_target,
-                    test_phi_input,
-                    test_target,
-                    outer_loss,
+                    model.to(device=device),
+                    train_phi_input.to(device=device),
+                    train_target.to(device=device),
+                    test_phi_input.to(device=device),
+                    test_target.to(device=device),
+                    outer_loss.to(device=device),
                 )
         else:
             return_loss = get_lin_reg_test_loss(
-                model,
-                train_phi_input,
-                train_target,
-                test_phi_input,
-                test_target,
-                outer_loss,
+                model.to(device=device),
+                train_phi_input.to(device=device),
+                train_target.to(device=device),
+                test_phi_input.to(device=device),
+                test_target.to(device=device),
+                outer_loss.to(device=device),
             )
 
     # clean up if in evaluation mode
