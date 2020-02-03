@@ -5,6 +5,7 @@
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/regression_lin_reg
 
 #$ -l tmem=12G
+#$ -l -gpu=true
 #$ -l h_rt=10:0:0
 
 
