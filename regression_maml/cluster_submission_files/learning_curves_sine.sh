@@ -9,7 +9,7 @@
 #$ -l h_rt=10:0:0
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
-SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
+SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh_maml
 mkdir -p $SAVE_DIR
 
 # Remember to also export the path to the libraries and software needed, example

@@ -1,16 +1,16 @@
 #$ -S /bin/bash
 #$ -j y
 #$ -N aml_lin_reg_sine
-#$ -t 1-5
+#$ -t 1-1
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/regression_lin_reg
 
-#$ -l tmem=12G
+#$ -l tmem=3G
 #$ -l gpu=true
 #$ -l h_rt=10:0:0
 
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
-SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
+SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh_lin_reg
 mkdir -p $SAVE_DIR
 SAVE_PATH=$SAVE_DIR
 
@@ -33,7 +33,7 @@ fi
 # NOTE: If you want to specify first order,
 # add --first_order flag to end.
 python3 main.py \
-        --n_train_batches 2000\
+        --n_train_batches 100\
         --n_val_batches 1 \
         --n_test_batches 100 \
         --seed $SGE_TASK_ID \
