@@ -117,10 +117,10 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
             "Optimizer {} not implemented".format(args.kernel_meta_optimizer)
         )
     for idx, batch in enumerate(sampled_batches_train):
-        model.zero_grad()
-        outer_loss = get_outer_loss(batch, model, args, test=False)
-        outer_loss.backward()
         for _ in range(num_grad_steps_meta):
+            model.zero_grad()
+            outer_loss = get_outer_loss(batch, model, args, test=False)
+            outer_loss.backward()
             meta_optimizer.step()
 
         del outer_loss

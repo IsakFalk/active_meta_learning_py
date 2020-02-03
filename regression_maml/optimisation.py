@@ -93,7 +93,7 @@ class KernelHerding:
         self.unsampled_indices = ~self.sampled_indices
         self.objective_curve[0] = np.nan
 
-        for t in tqdm(range(1, self.stop_t)):
+        for t in range(1, self.stop_t):
             # The objective function of all points we can sample
             J = self._objective_func(t)
             # Get the index for the argmax
@@ -257,7 +257,7 @@ class FrankWolfe:
         self.W[0, 0] = 1.0
         self.objective_curve[0] = np.nan
 
-        for t in tqdm(range(1, self.stop_t)):
+        for t in range(1, self.stop_t):
             # The objective function of all points we can sample
             J = self._objective_func(t)
             # Get the index for the argmin
@@ -474,7 +474,7 @@ class FrankWolfeLineSearch:
         self.objective_curve[0] = np.nan
         self.rho_t[0] = np.nan
 
-        for t in tqdm(range(1, self.stop_t)):
+        for t in range(1, self.stop_t):
             # The objective function of all points we can sample
             J = self._objective_func(t)
             # Get the index for the argmin

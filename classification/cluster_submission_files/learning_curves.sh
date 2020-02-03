@@ -32,21 +32,21 @@ fi
 # NOTE: If you want to specify first order,
 # add --first_order flag to end.
 python3 main.py \
-        --n_train_batches 5000 \
+        --n_train_batches 3000 \
         --n_test_batches 100 \
         --seed $SGE_TASK_ID \
-        --tasks_per_metaupdate 8 \
+        --tasks_per_metaupdate 4 \
         --evaluate_every 100 \
         --k_shot 1 \
         --k_query 5 \
         --lr_inner 0.5 \
-        --lr_meta 0.4 \
+        --lr_meta 0.2 \
         --meta_optimizer sgd \
         --frank_wolfe kernel_herding \
         --kernel_function mean_linear \
         --num_grad_steps_inner 1 \
         --num_grad_steps_eval 1 \
-        --num_grad_steps_meta 1 \
+        --num_grad_steps_meta 5 \
         --num_filters 64 \
         --dataset omniglot \
         --base_dataset_train train \
