@@ -34,12 +34,12 @@ fi
 # NOTE: If you want to specify first order,
 # add --first_order flag to end.
 python3 main.py \
-        --n_train_batches 300\
+        --n_train_batches 5\
         --n_val_batches 1 \
-        --n_test_batches 10 \
+        --n_test_batches 2 \
         --seed $SGE_TASK_ID \
-        --tasks_per_metaupdate 4 \
-        --evaluate_every 10 \
+        --tasks_per_metaupdate 1 \
+        --evaluate_every 1 \
         --k_shot 5 \
         --k_query 15 \
         --inner_regularization 0.05 \
