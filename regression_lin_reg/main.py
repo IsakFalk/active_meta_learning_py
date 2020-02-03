@@ -30,7 +30,6 @@ def get_outer_loss(batch, model, args, test=False):
             feature_dim
         )
         w = torch.inverse(C) @ train_phi_input.t() @ train_target
-        assert w.shape == (feature_dim, 1)
         pred_target = test_phi_input @ w
         pred_target
         outer_loss += torch.sum((pred_target - test_target) ** 2) / n_test
