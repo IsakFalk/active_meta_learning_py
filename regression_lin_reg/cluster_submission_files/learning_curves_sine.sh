@@ -7,8 +7,7 @@
 #$ -l tmem=20G
 #$ -l h_rt=10:0:0
 
-SGE_TASK_ID=1
-JOB_ID=TEST
+
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
 SAVE_DIR=$PROJECT_DIR/experiments/learning_curves/${JOB_ID}_mlp_sine_kh
 mkdir -p $SAVE_DIR
