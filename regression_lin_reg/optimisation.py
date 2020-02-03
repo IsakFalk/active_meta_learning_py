@@ -1,5 +1,4 @@
 import numpy as np
-from  import tqdm
 
 
 def rho_t_func_kh(t):
