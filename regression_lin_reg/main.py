@@ -30,10 +30,12 @@ def get_outer_loss(batch, model, args, test=False):
             feature_dim
         )
         w = torch.inverse(C) @ train_phi_input.t() @ train_target
+        w.to(device=device)
         assert w.shape == (feature_dim, 1)
         pred_target = test_phi_input @ w
+        pred_target.to(device=device)
         outer_loss += torch.sum((pred_target - test_target) ** 2) / n_test
-        return outer_loss
+        return outer_loss.to_device()
 
     if test:
         _model = pickle.loads(pickle.dumps(model))
