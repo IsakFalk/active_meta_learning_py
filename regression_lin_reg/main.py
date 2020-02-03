@@ -27,11 +27,10 @@ def get_outer_loss(batch, model, args, test=False):
         model, train_phi_input, train_target, test_phi_input, test_target, outer_loss
     ):
         C = train_phi_input.t() @ train_phi_input + inner_lambda * n_train * torch.eye(
-            feature_dim.to(device=device)
-        )
+            feature_dim
+        ).to(device=device)
         w = torch.inverse(C) @ train_phi_input.t() @ train_target
         pred_target = test_phi_input @ w
-        pred_target
         outer_loss += torch.sum((pred_target - test_target) ** 2) / n_test
         return outer_loss
 
