@@ -15,7 +15,7 @@ mkdir -p $SAVE_DIR
 SAVE_PATH=$SAVE_DIR
 
 # Remember to also export the path to the libraries and software needed, example
-#source $PROJECT_DIR/project_environment.source
+source $PROJECT_DIR/project_environment.source
 
 # Log host and date
 hostname
