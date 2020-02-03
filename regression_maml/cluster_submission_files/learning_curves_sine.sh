@@ -4,7 +4,7 @@
 #$ -t 1-5
 #$ -wd /cluster/project9/MMD_FW_active_meta_learning/active_meta_learning_py/regression_maml
 
-#$ -l tmem=20G
+#$ -l tmem=12G
 #$ -l h_rt=10:0:0
 
 PROJECT_DIR=/cluster/project9/MMD_FW_active_meta_learning
