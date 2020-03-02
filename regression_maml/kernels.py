@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics.pairwise import rbf_kernel
+from scipy.spatial.distance import cdist, pdist, squareform
 
 
 def gaussian_kernel_matrix(X, Y=None, s2=1.0):

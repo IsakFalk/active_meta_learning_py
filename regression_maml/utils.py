@@ -1,40 +1,19 @@
-import random
-import json
-
-import torch
-import torch.nn.functional as F
-from torchmeta.toy import Sinusoid
-from torchmeta.utils.data import BatchMetaDataLoader
 import numpy as np
+import torch
+from torch.utils.data import DataLoader
+from torchmeta.toy import Harmonic, Sinusoid, SinusoidAndLine
+from torchmeta.utils.data import BatchMetaDataLoader
 
-##########
-# Torch  #
-##########
+from active_meta_learning.data import (EnvironmentDataSet,
+                                       HypercubeWithVertexGaussian,
+                                       UniformHypercube, UniformSphere,
+                                       VonMisesFisherMixture)
 
+##############
+# Parameters #
+##############
 
-def swish(x):
-    return x * F.sigmoid(x)
-
-
-####################
-# Reproducibility  #
-####################
-
-
-def set_seed(seed, cudnn=True):
-    """
-    Seed everything we can!
-    Note that gym environments might need additional seeding (env.seed(seed)),
-    and num_workers needs to be set to 1.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.random.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    # note: the below slows down the code but makes it reproducible
-    # if (seed is not None) and cudnn:
-    #     torch.backends.cudnn.deterministic = True
+custom_datasets = ["uniformsphere", "uniformcube", "vmfmixture", "gaussianvertexcube"]
 
 
 ####################################
@@ -151,6 +130,9 @@ def get_active_learning_batches(
 
 def generate_dataloaders(args):
     # Create dataset
+    k = args.num_clusters
+    d = args.data_dim
+
     if args.dataset == "sine":
         dataset_train = Sinusoid(
             num_samples_per_task=args.k_shot + args.k_query,
@@ -164,42 +146,93 @@ def generate_dataloaders(args):
             num_samples_per_task=args.k_shot + args.k_query,
             num_tasks=args.n_test_batches * args.tasks_per_metaupdate,
         )
+    elif args.dataset == "harmonic":
+        dataset_train = Harmonic(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_train_batches * args.tasks_per_metaupdate,
+        )
+        dataset_val = Harmonic(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_val_batches * args.tasks_per_metaupdate,
+        )
+        dataset_test = Harmonic(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_test_batches * args.tasks_per_metaupdate,
+        )
+    elif args.dataset == "sinusoidandline":
+        dataset_train = SinusoidAndLine(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_train_batches * args.tasks_per_metaupdate,
+        )
+        dataset_val = SinusoidAndLine(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_val_batches * args.tasks_per_metaupdate,
+        )
+        dataset_test = SinusoidAndLine(
+            num_samples_per_task=args.k_shot + args.k_query,
+            num_tasks=args.n_test_batches * args.tasks_per_metaupdate,
+        )
+    elif args.dataset == "uniformsphere":
+        dataset_train = UniformSphere(d)
+        dataset_val = UniformSphere(d)
+        dataset_test = UniformSphere(d)
+    elif args.dataset == "uniformcube":
+        dataset_train = UniformHypercube(d)
+        dataset_val = UniformHyperCube(d)
+        dataset_test = UniformHyperCube(d)
+    elif args.dataset == "vmfmixture":
+        raise Exception("Dataset {} not implemented".format(args.dataset))
+    elif args.dataset == "gaussianvertexcube":
+        dataset_train = HypercubeWithVertexGaussian(d, s2=0.01)
+        dataset_val = HypercubeWithVertexGaussian(d, s2=0.01)
+        dataset_test = HypercubeWithVertexGaussian(d, s2=0.01)
+
     else:
         raise Exception("Dataset {} not implemented".format(args.dataset))
 
-    dataloader_train = BatchMetaDataLoader(
-        dataset_train, batch_size=args.tasks_per_metaupdate, num_workers=args.n_workers,
-    )
-    dataloader_val = BatchMetaDataLoader(
-        dataset_val, batch_size=args.tasks_per_metaupdate, num_workers=args.n_workers,
-    )
-    dataloader_test = BatchMetaDataLoader(
-        dataset_test, batch_size=args.tasks_per_metaupdate, num_workers=args.n_workers,
-    )
+    if args.dataset in custom_datasets:
+        env_dataset_train = EnvironmentDataSet(
+            args.k_shot, args.k_query, dataset_train, noise_w=0.001, noise_y=0.0
+        )
+        dataloader_train = DataLoader(
+            env_dataset_train,
+            batch_size=1,  # torch IterableDataset reduces to batch_size=1 for any batch_size we pick
+            num_workers=args.n_workers,
+            collate_fn=env_dataset_train.collate_fn,
+        )
+        env_dataset_val = EnvironmentDataSet(
+            args.k_shot, args.k_query, dataset_val, noise_w=0.001, noise_y=0.0
+        )
+        dataloader_val = DataLoader(
+            env_dataset_val,
+            batch_size=1,  # torch IterableDataset reduces to batch_size=1 for any batch_size we pick
+            num_workers=args.n_workers,
+            collate_fn=env_dataset_val.collate_fn,
+        )
+        env_dataset_test = EnvironmentDataSet(
+            args.k_shot, args.k_query, dataset_test, noise_w=0.001, noise_y=0.0
+        )
+        dataloader_test = DataLoader(
+            env_dataset_test,
+            batch_size=1,  # torch IterableDataset reduces to batch_size=1 for any batch_size we pick
+            num_workers=args.n_workers,
+            collate_fn=env_dataset_test.collate_fn,
+        )
+    else:
+        dataloader_train = BatchMetaDataLoader(
+            dataset_train,
+            batch_size=args.tasks_per_metaupdate,
+            num_workers=args.n_workers,
+        )
+        dataloader_val = BatchMetaDataLoader(
+            dataset_val,
+            batch_size=args.tasks_per_metaupdate,
+            num_workers=args.n_workers,
+        )
+        dataloader_test = BatchMetaDataLoader(
+            dataset_test,
+            batch_size=args.tasks_per_metaupdate,
+            num_workers=args.n_workers,
+        )
 
     return dataloader_train, dataloader_val, dataloader_test
-
-
-###########################
-# Create config from args #
-###########################
-
-
-def dump_args_to_json(args, save_path):
-    d = dict(args._get_kwargs())
-    d.pop("device", None)
-    d.pop("num_workers", None)
-    with open(save_path / "config.json", "w+") as f:
-        json.dump(d, f, sort_keys=True, indent=4)
-
-
-def dump_runs_to_npy(
-    test_loss_uniform, test_loss_fw, save_path,
-):
-    np.save(save_path / "test_loss_uniform.npy", test_loss_uniform)
-    np.save(save_path / "test_loss_fw.npy", test_loss_fw)
-
-
-def dump_runs_to_json(runs_dict, save_path):
-    with open(save_path / "runs.json", "w+") as f:
-        json.dump(runs_dict, f)

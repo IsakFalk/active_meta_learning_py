@@ -1,17 +1,19 @@
-import pickle
 import logging
+import pickle
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO)
-
-import torch
 import numpy as np
+import torch
 
-import utils
-from models import MultiLayerPerceptron
-import optimisation
-import kernels
+import active_meta_learning.data_utils as data_utils
+import active_meta_learning.kernels as kernels
+import active_meta_learning.optimisation as optimisation
 import arguments
+import utils
+from active_meta_learning.models import MultiLayerPerceptron
+from active_meta_learning.utils import set_seed
+
+logging.basicConfig(level=logging.INFO)
 
 
 def get_outer_loss(batch, model, args, test=False):
@@ -24,7 +26,7 @@ def get_outer_loss(batch, model, args, test=False):
     feature_dim = args.feature_dim
 
     def get_lin_reg_test_loss(
-        model, train_phi_input, train_target, test_phi_input, test_target, outer_loss
+        train_phi_input, train_target, test_phi_input, test_target, outer_loss
     ):
         C = train_phi_input.t() @ train_phi_input + inner_lambda * n_train * torch.eye(
             feature_dim
@@ -64,7 +66,6 @@ def get_outer_loss(batch, model, args, test=False):
         if test:
             with torch.no_grad():
                 return_loss = get_lin_reg_test_loss(
-                    model.to(device=device),
                     train_phi_input.to(device=device),
                     train_target.to(device=device),
                     test_phi_input.to(device=device),
@@ -73,7 +74,6 @@ def get_outer_loss(batch, model, args, test=False):
                 )
         else:
             return_loss = get_lin_reg_test_loss(
-                model.to(device=device),
                 train_phi_input.to(device=device),
                 train_target.to(device=device),
                 test_phi_input.to(device=device),
@@ -135,7 +135,7 @@ def run_training_loop(sampled_batches_train, sampled_batches_test, model, args):
 
 def run(args):
     # Set seed for reproducibility
-    utils.set_seed(args.seed)
+    set_seed(args.seed)
 
     # NOTE: Will use scheduler to output start and stopping
     # Just save seed as this is the only unique identifier for this run
@@ -146,7 +146,7 @@ def run(args):
     # seed_{seed} need to be unique, crash if not, don't overwrite
     save_path_data.mkdir(parents=True, exist_ok=False)
     if args.write_config == "yes":
-        utils.dump_args_to_json(args, save_path)
+        data_utils.dump_args_to_json(args, save_path)
 
     if args.kernel_function == "double_gaussian_kernel":
         kernel_mat_func = kernels.gaussian_kernel_mmd2_matrix
@@ -167,24 +167,50 @@ def run(args):
 
     def get_new_model_instance():
         model = MultiLayerPerceptron(
-            in_dim=1, out_dim=args.feature_dim, hidden_dim=args.hidden_dim,
+            in_dim=args.data_dim, out_dim=args.feature_dim, hidden_dim=args.hidden_dim,
         )
         return model
 
-    logging.info("Sampling batched train datasets")
-    sampled_batches_train = utils.aggregate_sampled_task_batches(dataloader_train)
-    nn_sampled_batches_train = utils.convert_batches_to_nn_dict_train_test_form(
-        sampled_batches_train, args.k_shot
-    )
-    logging.info("Generating fw train batch order")
-    nn_sampled_batches_train_fw = utils.get_active_learning_batches(
-        sampled_batches_train, args.k_shot, kernel_mat_func, fw_class
-    )
-    logging.info("Sampling batched test datasets")
-    sampled_batches_test = utils.aggregate_sampled_task_batches(dataloader_test)
-    nn_sampled_batches_test = utils.convert_batches_to_nn_dict_train_test_form(
-        sampled_batches_test, args.k_shot
-    )
+    if args.dataset in utils.custom_datasets:
+        from active_meta_learning.custom_data_utils import (
+            aggregate_sampled_task_batches,
+            get_active_learning_batches,
+        )
+
+        logging.info("Sampling batched train datasets")
+        nn_sampled_batches_train = aggregate_sampled_task_batches(
+            dataloader_train, args.n_train_batches
+        )
+        logging.info("Generating fw train batch order")
+        nn_sampled_batches_train_fw = get_active_learning_batches(
+            nn_sampled_batches_train, args.k_shot, kernel_mat_func, fw_class
+        )
+        logging.info("Sampling batched test datasets")
+        nn_sampled_batches_test = aggregate_sampled_task_batches(
+            dataloader_test, args.n_train_batches
+        )
+    else:
+        from active_meta_learning.torchmeta_toy_data_utils import (
+            aggregate_sampled_task_batches,
+            get_active_learning_batches,
+            convert_batches_to_nn_dict_train_test_form,
+        )
+
+        logging.info("Sampling batched train datasets")
+        sampled_batches_train = aggregate_sampled_task_batches(dataloader_train)
+        nn_sampled_batches_train = convert_batches_to_nn_dict_train_test_form(
+            sampled_batches_train, args.k_shot
+        )
+        logging.info("Generating fw train batch order")
+        nn_sampled_batches_train_fw = get_active_learning_batches(
+            sampled_batches_train, args.k_shot, kernel_mat_func, fw_class
+        )
+        logging.info("Sampling batched test datasets")
+        sampled_batches_test = aggregate_sampled_task_batches(dataloader_test)
+        nn_sampled_batches_test = convert_batches_to_nn_dict_train_test_form(
+            sampled_batches_test, args.k_shot
+        )
+
     logging.info("Run training: Uniform")
     test_loss_uniform = run_training_loop(
         nn_sampled_batches_train,
@@ -201,7 +227,7 @@ def run(args):
     )
     logging.info("Run completed")
 
-    utils.dump_runs_to_npy(
+    data_utils.dump_runs_to_npy(
         test_loss_uniform, test_loss_fw, save_path_data,
     )
     logging.info("Loss dumped to npy")

@@ -92,12 +92,32 @@ def parse_args():
         "--hidden_dim", type=int, default=40, help="number hidden units in each layer"
     )
     parser.add_argument(
+        "--num_layers", type=int, default=40, help="number of hidden layers in mlp"
+    )
+    parser.add_argument(
         "--feature_dim", type=int, default=10, help="feature output dimension"
     )
 
     # # Data
-    parser.add_argument("--dataset", type=str, default="sine", help="dataset to use")
-    # In order to be able to avoid dataset shift
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="sine",
+        help="dataset to use, current options: sine, harmonic, sinusoidandline, uniformsphere, uniformcube, vmfmixture",
+    )
+    # For custom datasets
+    parser.add_argument(
+        "--num_clusters",
+        type=int,
+        default=4,
+        help="number of clusters in mixture dataset",
+    )
+    parser.add_argument(
+        "--data_dim",
+        type=int,
+        default=1,
+        help="dimension of embedded space of the dataset",
+    )
     parser.add_argument(
         "--save_path", type=str, default=".", help="folder to save resulting data",
     )

@@ -112,7 +112,25 @@ def parse_args():
     )
 
     # # Data
-    parser.add_argument("--dataset", type=str, default="sine", help="dataset to use")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="sine",
+        help="dataset to use, current options: sine, harmonic, sinusoidandline, uniformsphere, uniformcube, vmfmixture",
+    )
+    # For custom datasets
+    parser.add_argument(
+        "--num_clusters",
+        type=int,
+        default=4,
+        help="number of clusters in mixture dataset",
+    )
+    parser.add_argument(
+        "--data_dim",
+        type=int,
+        default=1,
+        help="dimension of embedded space of the dataset",
+    )
     # In order to be able to avoid dataset shift
     parser.add_argument(
         "--save_path", type=str, default=".", help="folder to save resulting data",

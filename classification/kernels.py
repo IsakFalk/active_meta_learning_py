@@ -1,9 +1,16 @@
 import numpy as np
 from scipy.spatial.distance import cdist, pdist, squareform
+import scipy.linalg as linalg
 
 ############
 # Kernels  #
 ############
+
+
+def median_heuristic(X, num_samples=1000):
+    X_subsampled = X[np.random.permutation(np.arange(X.shape[0]))[:num_samples]]
+    pairwise_sq_dists = squareform(pdist(X, "sqeuclidean"))
+    return np.median(pairwise_sq_dists[np.tril_indices(num_samples, k=-1)])
 
 
 def gaussian_kernel_matrix(X, Y=None, s2=1.0):
@@ -40,6 +47,55 @@ def mean_embedding_linear_kernel_matrix(X, Y=None):
         means_X = X.mean(axis=1)  # (m, d)
         K = means_X @ means_X.T
     return K
+
+
+## Below helps calculating the image feature map
+def linear_regression_weight_matrix(X, Y, l=0.01):
+    """Calculate the linear regression weight matrix W
+
+    X is an (m, d) matrix and Y is an (m, c) one-hot encoded
+    output matrix. Note that X might itself be the output of a
+    feature map.
+    """
+    assert X.shape[0] == Y.shape[0]
+    m, d = X.shape
+    _, c = Y.shape
+    alpha = linalg.solve(X @ X.T + m * l * np.eye(m), Y, sym_pos=True)
+    W = X.T @ alpha
+    return W
+
+
+def averaged_lin_reg_weights(X, Y, l=0.01):
+    """Calculate the averaged kernel of the linear regression weight W
+
+    The output is the mean over c and d"""
+    return linear_regression_weight_matrix(X, Y, l).mean(axis=1)
+
+
+def lin_reg_feature_map(M_x, M_y, l=0.01):
+    """Calculate the feature map phi_D
+
+    phi_D is a matrix of shape (N, d) where N is the number of tasks and
+    d is the dimension of the domain of x.
+    :param M_x: matrix of shape (N, m, d), m is the number of points in a task (k_shot + k_query)
+    :param M_y: matrix of shape (N, m, c), c is the number of classes (or n_way)"""
+    assert M_y.shape[:2] == M_x.shape[:2]
+    N, m, d = M_x.shape
+    _, _, c = M_y.shape
+    phi_D = np.zeros((N, d))
+    for i in range(N):
+        phi_D[i, :] = averaged_lin_reg_weights(M_x[i, :], M_y[i, :], l)
+    return phi_D
+
+
+def lin_reg_gaussian_kernel_matrix(
+    M_x, M_y, s2=1.0, l=0.01, use_median_heuristic=True, n_median=1000
+):
+    phi_D = lin_reg_feature_map(M_x, M_y, l)
+    if use_median_heuristic:
+        n_median = min(n_median, phi_D.shape[0])
+        s2 = median_heuristic(phi_D, n_median)
+    return gaussian_kernel_matrix(X=phi_D, s2=s2)
 
 
 ########

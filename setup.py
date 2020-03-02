@@ -1,8 +1,9 @@
-from distutils.core import setup
+from setuptools import setup
 
 setup(
-    name="ActiveMetaLearning",
+    name="active_meta_learning",
     version="0.1",
-    packages=["active_meta_learning",],
+    author="Isak Falk",
+    packages=["active_meta_learning"],
     license="None",
 )
