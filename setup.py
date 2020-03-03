@@ -5,5 +5,8 @@ setup(
     version="0.1",
     author="Isak Falk",
     packages=["active_meta_learning"],
+    install_requires=[
+          'spherecluster',
+    ]
     license="None",
 )
