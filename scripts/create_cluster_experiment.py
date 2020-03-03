@@ -5,6 +5,7 @@ param_dict = {"d": [5, 10], "k": [5, 10], "s2": [0.01, 0.2]}
 
 array_job = ArrayJob(
     param_dict=param_dict,
+    working_dir=project_parameters.PROJECT_DIR,
     script_path=project_parameters.SCRIPTS_DIR
     / "mmd_learning_curves_over_tasks_hypercube_with_k_vertex_gaussians.py",
     job_submission_files_dir=project_parameters.JOB_SUBMISSION_DIR,
