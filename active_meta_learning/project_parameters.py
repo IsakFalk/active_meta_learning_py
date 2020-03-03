@@ -1,6 +1,6 @@
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).parent
+PROJECT_DIR = Path(__file__).parent.parent
 SCRIPTS_DIR = PROJECT_DIR / "scripts"
 JOB_SUBMISSION_DIR = PROJECT_DIR / "cluster_job_submissions"
 DATA_DIR = PROJECT_DIR / "data"
