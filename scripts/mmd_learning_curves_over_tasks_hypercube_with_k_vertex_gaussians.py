@@ -2,6 +2,7 @@ import argparse
 import pickle
 from pathlib import Path
 
+import matplotlib as mpl
 import numpy as np
 from matplotlib import pyplot as plt
 from sklearn.decomposition import PCA
@@ -14,6 +15,8 @@ from active_meta_learning.kernels import *
 from active_meta_learning.optimisation import *
 from active_meta_learning.utils import *
 from hpc_cluster.utils import extract_csv_to_dict
+
+mpl.use("Agg")
 
 
 def fit_env_pca(env):
@@ -154,7 +157,7 @@ def run_experiment(
     fig, ax = plot_2d_dist(env, fitted_pca)
     fig.savefig(
         plot_dir
-        / "task_w_pdf_on_sphere_scatter_plot-d={}_k={}_s2={}".format(
+        / "task_w_pdf_on_sphere_scatter_plot-d={}_k={}_s2={}.png".format(
             env.d, env.k, env.s2
         ),
         format="png",
@@ -194,7 +197,9 @@ def run_experiment(
     fig, ax = plot_mmd_kh_vs_uniform(J_kh_D, J_uniform_D)
     fig.savefig(
         plot_dir
-        / "mmd_kh_vs_uniform_in_D_space-d={}_k={}_s2={}".format(env.d, env.k, env.s2),
+        / "mmd_kh_vs_uniform_in_D_space-d={}_k={}_s2={}.png".format(
+            env.d, env.k, env.s2
+        ),
         format="png",
     )
 
@@ -204,7 +209,7 @@ def run_experiment(
     )
     fig.savefig(
         plot_dir
-        / "n_first_task_ws_chosen_kh_vs_uniform-d={}_k={}_s2={}".format(
+        / "n_first_task_ws_chosen_kh_vs_uniform-d={}_k={}_s2={}.png".format(
             env.d, env.k, env.s2
         ),
         format="png",
@@ -217,7 +222,9 @@ def run_experiment(
     fig, ax = plot_mmd_kh_D_vs_KH_w_vs_uniform(J_kh_D, J_kh_w, J_uniform_w)
     fig.savefig(
         plot_dir
-        / "mmd_kh_vs_uniform_in_w_space-d={}_k={}_s2={}".format(env.d, env.k, env.s2),
+        / "mmd_kh_vs_uniform_in_w_space-d={}_k={}_s2={}.png".format(
+            env.d, env.k, env.s2
+        ),
         format="png",
     )
 
@@ -227,7 +234,7 @@ def run_experiment(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Cluster paramters (see hpc_cluster library docs)"
+        description="Cluster parameters (see hpc_cluster library docs)"
     )
     parser.add_argument(
         "--csv_path", type=str,
@@ -245,9 +252,8 @@ if __name__ == "__main__":
 
     # read in line of parameters
     param_dict = extract_csv_to_dict(args.csv_path, args.extract_line)
-    print(param_dict)
     env = HypercubeWithKVertexGaussian(**param_dict)
-    run_experiment(env, plot_dir=args.output_dir, N=500)
+    run_experiment(env, plot_dir=args.output_dir, N=300)
     # dump params
     with open(args.output_dir / "parameters.pkl", "wb") as f:
         pickle.dump(param_dict, f)
