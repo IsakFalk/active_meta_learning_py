@@ -6,9 +6,10 @@ from scipy.spatial.distance import cdist, pdist, squareform
 ####################
 
 
-def median_heuristic(sqeuc_dist_mat):
-    n = sqeuc_dist_mat.shape[0]
-    cart_ind = np.triu_indices(n=n, k=1)
+def median_heuristic(sqeuc_dist_mat, n_subsamples=None):
+    if n_subsamples is None:
+        n = sqeuc_dist_mat.shape[0]
+        cart_ind = np.triu_indices(n=n, k=1)
     return np.median(sqeuc_dist_mat[cart_ind])
 
 
@@ -95,10 +96,19 @@ def mmd2(K_xx, K_yy, K_xy, w_x=None, w_y=None):
     return mmd2
 
 
-def mmd2_matrix(A):
+def mmd2_matrix(A, median_heuristic_n_subsamples=None):
     assert len(A.shape) == 3
     m, n, d = A.shape
-    pairwise_square_dists = squareform(pdist(A.reshape(-1, d), "sqeuclidean"))
+    if median_heuristic_n_subsamples is None:
+        vec_A = A.reshape(-1, d)
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
+    else:
+        vec_A = A.reshape(-1, d)
+        subsample_indices = np.random.permutation(vec_A.shape[0])[
+            :median_heuristic_n_subsamples
+        ]
+        vec_A = vec_A[subsample_indices]
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
     base_s2 = median_heuristic(pairwise_square_dists)
     M2 = np.zeros((m, m))
     for i in range(m):
@@ -113,11 +123,16 @@ def mmd2_matrix(A):
     return M2
 
 
-def gaussian_kernel_mmd2_matrix(A):
-    assert len(A.shape) == 3
-    m, n, d = A.shape
-    M2 = mmd2_matrix(A)
-    meta_s2 = median_heuristic(M2)
+def gaussian_kernel_mmd2_matrix(A, median_heuristic_n_subsamples=None):
+    # Need to check for batches
+    assert A.ndim == 3 or A.ndim == 4
+    if A.ndim == 3:
+        M2 = mmd2_matrix(A, median_heuristic_n_subsamples)
+        meta_s2 = median_heuristic(M2)
+    if A.ndim == 4:
+        b, m, n, d = A.shape
+        M2 = mmd2_matrix(A.reshape(b * m, n, d), median_heuristic_n_subsamples)
+        meta_s2 = median_heuristic(M2)
     return np.exp(-0.5 * M2 / meta_s2)
 
 
