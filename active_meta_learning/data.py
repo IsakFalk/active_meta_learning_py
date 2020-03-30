@@ -98,11 +98,16 @@ class HypercubeWithAllVertexGaussian:
 
 
 class HypercubeWithKVertexGaussian:
-    def __init__(self, d, k, s2):
+    def __init__(self, d, k, s2, mixture_vertices=None):
         self.d = d
         self.k = k
         self.s2 = s2
-        self._generate_mixture_vertices()
+        if mixture_vertices is None:
+            self._generate_mixture_vertices()
+        else:
+            assert type(mixture_vertices) == list
+            assert len(mixture_vertices) == self.k
+            self.mixture_vertices = mixture_vertices
 
     def _generate_mixture_vertices(self):
         num_mixtures = 0
@@ -133,6 +138,36 @@ class HypercubeWithKVertexGaussian:
 #############################
 
 
+class GaussianNoiseMixture:
+    def __init__(self, p, mus, s2s, keep_mixture_history=True):
+        """Generate noise from mixture of Gaussian distributions
+
+        p is probability of picking first mixture, mus and s2s arrays
+        with entries being the mean and variance of each mixture"""
+        np.testing.assert_allclose(p.sum(), 1.0)
+        assert mus.shape == s2s.shape
+        self.p = p
+        self.mus = mus
+        self.s2s = s2s
+        # Keep sampled sequence of mixture as an array of integers
+        self.keep_mixture_history = keep_mixture_history
+        self.mixture_history = []
+
+    def sample(self, task_w, X, Y):
+        k = Y.shape[0]
+        mixture = np.random.choice(np.arange(len(self.mus)), p=self.p)
+        if self.keep_mixture_history:
+            self.mixture_history.append(mixture)
+        mu = self.mus[mixture]
+        s2 = self.s2s[mixture]
+        error = mu + np.sqrt(s2) * np.random.randn(k)
+        error = error.reshape(-1, 1)
+        return error
+
+    def reset_history(self):
+        self.mixture_history = []
+
+
 class EnvironmentDataSet(IterableDataset):
     def __init__(self, k_shot, k_query, env, noise_w=0.01, noise_y=0.01):
         self.k_shot = k_shot
@@ -151,7 +186,21 @@ class EnvironmentDataSet(IterableDataset):
             assert task_w.shape == (self.d, 1), "{}".format(task_w.shape)
             X = np.random.rand(self.k_total, self.d)
             Y = X @ task_w
-            Y += np.sqrt(self.noise_y) * np.random.randn(self.k_total).reshape(-1, 1)
+            # Allow noise to be a function, noise takes as input
+            # w, X, Y
+            if callable(self.noise_y):
+                error = self.noise_y(task_w, X, Y).reshape(-1, 1)
+                assert error.shape == (
+                    self.k_total,
+                    1,
+                ), "error have shape {}, not {}".format(error.shape, Y.shape)
+                Y += error
+            elif type(self.noise_y) == float:
+                Y += np.sqrt(self.noise_y) * np.random.randn(self.k_total).reshape(
+                    -1, 1
+                )
+            else:
+                raise ()
 
             # Split
             X_train = X[: self.k_shot, :]
