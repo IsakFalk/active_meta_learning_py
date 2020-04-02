@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import logging
 
 from tqdm import tqdm
 import numpy as np
@@ -101,10 +102,14 @@ if __name__=="__main__":
     parser.add_argument(
         "--output_dir", type=str,
     )
+
+    logging.info("Reading args")
     args = parser.parse_args()
     args.csv_path = Path(args.csv_path)
     args.output_dir = Path(args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    logging.info("Done!")
+    logging.info("Extracting args")
     # read in line of parameters
     param_dict = extract_csv_to_dict(args.csv_path, args.extract_line)
     d = param_dict["d"]
@@ -121,6 +126,7 @@ if __name__=="__main__":
     meta_val_batch_size = 1 # Hardcoded
     env = HypercubeWithKVertexGaussian(d, k=k, s2=noise_w/d)
 
+    logging.info("Generating meta-train batches")
     # Sample meta-train
     train_dataset = EnvironmentDataSet(
         k_shot, k_query, env, noise_w=0.0, noise_y=0.0
@@ -134,7 +140,9 @@ if __name__=="__main__":
     train_batches_kh = convert_batches_to_fw_form(train_batches)
     train_batches = npfy_batches(train_batches)
     train_task_ws = get_task_parameters(train_batches)
+    logging.info("Done")
 
+    logging.info("Generating meta-val batches")
     # Sample meta-val
     val_dataset = EnvironmentDataSet(
         k_shot, k_query, env, noise_w=0.0, noise_y=0.0
@@ -146,22 +154,30 @@ if __name__=="__main__":
     val_batches_kh = convert_batches_to_fw_form(val_batches)
     val_batches = npfy_batches(val_batches)
     val_task_ws = get_task_parameters(val_batches)
+    logging.info("Done")
 
+    logging.info("Generating prototypes for:")
     dataset_indices = dict()
     # Sample k from meta-train using
     # Uniform
+    logging.info("Uniform")
     dataset_indices["uniform"] = np.arange(num_prototypes)
+    logging.info("Done")
     # KH weights
+    logging.info("KH weights")
     s2_w = median_heuristic(squareform(pdist(train_task_ws, "sqeuclidean")))
     K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
     kh_w = KernelHerding(K_w, stop_t=num_prototypes)
     kh_w.run()
     dataset_indices["kh_weights"] = kh_w.sampled_order
+    logging.info("Done")
     # KH data
+    logging.info("KH Data")
     K_D = gaussian_kernel_mmd2_matrix(train_batches_kh, median_heuristic_n_subsamples)
     kh_D = KernelHerding(K_D, stop_t=num_prototypes)
     kh_D.run()
     dataset_indices["kh_data"] = kh_D.sampled_order
+    logging.info("Done")
 
     class MetaKNNBias():
         """Meta k_nn on weights, prediction on data"""
@@ -204,18 +220,23 @@ if __name__=="__main__":
     meta_val_error["kh_weights"] = []
     meta_val_error["kh_data"] = []
     # Learning curves
+    logging.info("Defining models")
     distance = lambda x, y: ((x - y) ** 2).sum()
     model_u = MetaKNNBias(train_task_ws[dataset_indices["uniform"]], distance=distance)
     model_kh_w = MetaKNNBias(train_task_ws[dataset_indices["kh_weights"]], distance=distance)
     model_kh_D = MetaKNNBias(train_task_ws[dataset_indices["kh_data"]], distance=distance)
-    for val_task in tqdm(val_batches):
+    logging.info("Done")
+    logging.info("Getting meta validation errors")
+    for val_task in val_batches:
         # uniform
         meta_val_error["uniform"].append(model_u.transfer_risk(val_task))
         # kh weights
         meta_val_error["kh_weights"].append(model_kh_w.transfer_risk(val_task))
         # kh data
         meta_val_error["kh_data"].append(model_kh_D.transfer_risk(val_task))
+    logging.info("Done")
 
+    logging.info("Plotting")
     fig, ax = plt.subplots(2, 1, figsize=(10, 10))
     df = pd.DataFrame(meta_val_error)
     # Historgram
@@ -238,3 +259,5 @@ if __name__=="__main__":
     ax[1].set_ylabel("MSE")
     plt.tight_layout()
     fig.savefig(args.output_dir / "performance_plot-{}.png".format(stringify_parameter_dictionary(param_dict)))
+    logging.info("Done")
+    logging.info("Good bye!")
