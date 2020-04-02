@@ -132,6 +132,55 @@ class HypercubeWithKVertexGaussian:
             W[i, :] = mu + self.s2 * np.random.randn(self.d)
         return W
 
+class HypercubeScaledAxesWithKVertexGaussian:
+    def __init__(self, d, k, s2, mixture_vertices=None, axes_scales=None):
+        self.d = d
+        self.k = k
+        self.s2 = s2
+        if mixture_vertices is None:
+            self._generate_mixture_vertices()
+        else:
+            assert type(mixture_vertices) == list
+            assert len(mixture_vertices) == self.k
+            self.mixture_vertices = mixture_vertices
+        if axes_scales is None:
+            # No rescaling
+            self.axes_scales = np.ones((self.d,))
+        else:
+            assert type(axes_scales) == np.ndarray
+            assert len(axes_scales) == self.d
+            assert all(axes_scales > 0.0)
+            self.axes_scales = axes_scales
+        self._scale_mixture_vertices()
+
+    def _generate_mixture_vertices(self):
+        num_mixtures = 0
+        mixture_vertices = []
+        while num_mixtures < self.k:
+            vertex = np.random.randint(2, size=self.d).reshape(-1, self.d).tolist()
+            if vertex not in mixture_vertices:
+                mixture_vertices.append(vertex)
+                num_mixtures += 1
+        mixture_vertices = [np.array(ll) for ll in mixture_vertices]
+        self.mixture_vertices = mixture_vertices
+
+    def _scale_mixture_vertices(self):
+        self._scaled_mixture_vertices = [
+            self.axes_scales.reshape(-1, self.d) * vert for vert in self.mixture_vertices
+        ]
+
+    def _sample_mixture(self):
+        return random.choice(self._scaled_mixture_vertices)
+
+    def sample(self, n):
+        assert type(n) == int
+        assert n > 0
+        W = np.zeros((n, self.d))
+        for i in range(n):
+            mu = self._sample_mixture()
+            W[i, :] = mu + self.s2 * np.random.randn(self.d)
+        return W
+
 
 #############################
 # Environment (Dataloaders) #
