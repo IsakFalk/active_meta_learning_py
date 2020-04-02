@@ -4,10 +4,10 @@ from active_meta_learning import project_parameters
 from hpc_cluster.utils import ArrayJob
 
 param_dict = {
-    "d": [5, 10, 30, 50],
-    "k": [4, 10],
-    "s2_w": [0.001],
-    "noise_y_high": [0.5, 1.0]
+    "d": [3, 5, 10],
+    "k": [2, 5, 8],
+    "noise_w": [0.01, 0.1, 1.0],
+    "num_prototypes": [5, 10]
 }
 
 array_job = ArrayJob(
@@ -15,7 +15,7 @@ array_job = ArrayJob(
     working_dir=project_parameters.PROJECT_DIR,
     source_path=Path(project_parameters.PROJECT_DIR / "project.source"),
     script_path=project_parameters.SCRIPTS_DIR
-    / "hi_low_output_noise_mixture_idea_with_low_k_shot.py",
+    / "1_nn_conditional_active_meta_learning_only_bias.py",
     job_submission_files_dir=project_parameters.JOB_SUBMISSION_DIR,
     job_output_dir=project_parameters.JOB_OUTPUT_DIR,
     program="python3",

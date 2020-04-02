@@ -301,7 +301,7 @@ def experiment(
     logging.info("Done!")
 
     # KH sampling
-    logging.info("Generating KH batches")
+    logging.info("Generating KH batches (data space)")
     kh_train_batches = convert_batches_to_fw_form(train_batches)
     logging.info("Generating kernel matrix")
     K_D = gaussian_kernel_mmd2_matrix(kh_train_batches, median_heuristic_n_subsamples)
@@ -325,27 +325,53 @@ def experiment(
         adaptation_steps,
         device,
     )
-    experiment_data["kh"] = {
+    experiment_data["kh_D"] = {
         "meta_train_errors": meta_train_errors,
         "meta_val_errors": meta_val_errors,
         "theta_0": model_parameters,
         "sampled_order": kh_D.sampled_order,
     }
-    experiment_data["kh"]["mixture_history"] = np.array(
+    experiment_data["kh_D"]["mixture_history"] = np.array(
         reorder_list(_mixture_history, kh_D.sampled_order)
     )
-
-    ### MMD experiment
-    experiment_data["mmd"] = dict()
+    # KH sampling (in weight space)
     # Process sampled tasks
     train_task_ws = get_task_parameters(train_batches)
-
     # Get KH (weight) ordering
+    logging.info("Generating KH batches (weight space)")
     s2_w = median_heuristic(squareform(pdist(train_task_ws, "sqeuclidean")))
     K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
     # Run herding
     kh_w = KernelHerding(K_w)
     kh_w.run()
+    logging.info("Run training for KH sampling")
+    meta_train_errors, meta_val_errors, model_parameters = run(
+        reorder_train_batches(train_batches, kh_w.sampled_order),
+        d,
+        noise_y_distribution,
+        env,
+        k_shot,
+        k_query,
+        meta_lr,
+        meta_optimiser,
+        fast_lr,
+        meta_train_batch_size,
+        meta_val_batch_size,
+        collect_val_data_every,
+        adaptation_steps,
+        device,
+    )
+    experiment_data["kh_w"] = {
+        "meta_train_errors": meta_train_errors,
+        "meta_val_errors": meta_val_errors,
+        "theta_0": model_parameters,
+        "sampled_order": kh_w.sampled_order,
+    }
+    experiment_data["kh_w"]["mixture_history"] = np.array(
+        reorder_list(_mixture_history, kh_D.sampled_order)
+    )
+    ### MMD experiment
+    experiment_data["mmd"] = dict()
     # Dump data in experiment dict
     experiment_data["mmd"]["K_w"] = K_w
     experiment_data["mmd"]["s2_w"] = s2_w
@@ -405,13 +431,13 @@ def main(
     )
 
     train_task_ws = experiment_data["train_tasks"]["task_ws"]
-    noise_mixture_history = experiment_data["kh"]["mixture_history"]
+    noise_mixture_history = experiment_data["kh_D"]["mixture_history"]
     mean_task_w = train_task_ws.mean(axis=0)
 
     logging.info("Plotting")
+    # Learning curves
     fig, ax = plt.subplots(2, 1, sharex=True)
     uniform_data = experiment_data["uniform"]
-    # Learning curves
     val_t = np.arange(0, num_train_batches, collect_val_data_every)
     ax[0].plot(
         uniform_data["meta_train_errors"],
@@ -426,37 +452,53 @@ def main(
         label="meta val error (U)",
         linestyle="--",
     )
-    kh_data = experiment_data["kh"]
+    kh_D_data = experiment_data["kh_D"]
     ax[0].plot(
-        kh_data["meta_train_errors"],
+        kh_D_data["meta_train_errors"],
         color="red",
         alpha=0.1,
-        label="meta train error (KH)",
+        label="meta train error (KH on data)",
     )
     ax[0].plot(
         val_t,
-        kh_data["meta_val_errors"],
+        kh_D_data["meta_val_errors"],
         color="red",
         linestyle="--",
-        label="meta val error (KH)",
+        label="meta val error (KH on data)",
+    )
+    kh_w_data = experiment_data["kh_w"]
+    ax[0].plot(
+        kh_w_data["meta_train_errors"],
+        color="orange",
+        alpha=0.1,
+        label="meta train error (KH on weights)",
+    )
+    ax[0].plot(
+        val_t,
+        kh_w_data["meta_val_errors"],
+        color="orange",
+        linestyle="--",
+        label="meta val error (KH on weights)",
     )
     ax[0].legend()
-    ax[0].set_title("Uniform vs KH: learning curves")
+    ax[0].set_title("learning curves")
     ax[0].set_ylabel("MSE")
     # Plot number of hi-noise in batch per timestep
     ax[1].plot(
         np.arange(0, num_train_batches),
-        moving_average(np.sum(uniform_data["mixture_history"], axis=1), 3),
+        np.sum(uniform_data["mixture_history"], axis=1),
         color="blue",
-        linestyle="-",
+        linestyle="",
+        marker="o"
     )
     ax[1].plot(
         np.arange(0, num_train_batches),
-        moving_average(np.sum(kh_data["mixture_history"], axis=1), 3),
+        np.sum(kh_D_data["mixture_history"], axis=1),
         color="red",
-        linestyle="-",
+        linestyle="",
+        marker="x"
     )
-    ax[1].set_title("Uniform vs KH: number of low-noise dataset in chosen batch at time t (moving average)")
+    ax[1].set_title("number of low-noise dataset in chosen batch at time t (moving average)")
     ax[1].set_xlabel('timestep')
     ax[1].set_ylabel('No. low-noise datsets in batch')
     ax[1].set_ylim([0.0, meta_train_batch_size])
@@ -487,7 +529,7 @@ def main(
         color="blue",
         label="norm of parameters from meta_train mean (Uniform)",
     )
-    kh_D_data = experiment_data["kh"]
+    kh_D_data = experiment_data["kh_D"]
     kh_D_params = np.concatenate(kh_D_data["theta_0"])
     val_t = np.arange(0, num_train_batches, GET_TASK_PARAMETERS_EVERY)
     ax.plot(
@@ -534,7 +576,7 @@ if __name__ == "__main__":
     k_shot = 4
     noise_y_low = 0.001
     # Form noise distribution
-    p = np.array([0.5, 0.5])
+    p = np.array([0.95, 0.05])
     mus = np.array([0.0, 0.0])
     s2s = np.array([noise_y_hi, noise_y_low])
     noise_y_distribution = GaussianNoiseMixture(p, mus, s2s)
@@ -550,11 +592,11 @@ if __name__ == "__main__":
         meta_lr=0.1,
         meta_optimiser=sgd,
         fast_lr=0.1,
-        num_train_batches=500,
-        meta_train_batch_size=1,
+        num_train_batches=300,
+        meta_train_batch_size=4,
         meta_val_batch_size=64,
         collect_val_data_every=5,
-        median_heuristic_n_subsamples=400,
+        median_heuristic_n_subsamples=300,
         adaptation_steps=1,
         device="cpu",
         save_path=args.output_dir,
