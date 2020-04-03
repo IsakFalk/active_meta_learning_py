@@ -283,7 +283,7 @@ if __name__=="__main__":
     fig, ax = plt.subplots(2, 1, figsize=(10, 10))
     df = pd.DataFrame(meta_test_error)
     # Historgram
-    bins = int(meta_test_batches)
+    bins = 'auto'
     ax[0].hist(meta_test_error["uniform"], color="blue", alpha=0.4, label="uniform", bins=bins)
     ax[0].axvline(np.mean(meta_test_error["uniform"]), color="blue", linestyle="--")
     ax[0].hist(meta_test_error["kh_weights"], color="orange", alpha=0.4, label="KH (weights)", bins=bins)
