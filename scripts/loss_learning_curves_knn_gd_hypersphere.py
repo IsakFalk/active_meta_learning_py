@@ -361,7 +361,10 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots(figsize=(12, 12))
     plot_sns_tsplot(meta_test_error, t, ax)
-    fig.savefig(args.output_dir / "learning_curves.png")
+    fig.savefig(
+        args.output_dir
+        / "learning_curves-{}.png".format(stringify_parameter_dictionary(param_dict))
+    )
 
     # Dump data
     # Params
