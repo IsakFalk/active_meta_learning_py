@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 import logging
 
+
 import hickle as hkl
 from tqdm import tqdm
 import numpy as np
@@ -33,6 +34,9 @@ from active_meta_learning.kernels import (
 from active_meta_learning.project_parameters import SCRIPTS_DIR
 from active_meta_learning.optimisation import KernelHerding
 from hpc_cluster.utils import extract_csv_to_dict
+
+logging.basicConfig(level=logging.INFO)
+
 
 GET_LOSS_EVERY = 1
 

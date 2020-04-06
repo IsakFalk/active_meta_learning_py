@@ -38,7 +38,11 @@ from active_meta_learning.project_parameters import SCRIPTS_DIR
 from active_meta_learning.optimisation import KernelHerding
 from hpc_cluster.utils import extract_csv_to_dict
 
+logging.basicConfig(level=logging.INFO)
+
+
 GET_LOSS_EVERY = 1
+
 
 
 def stringify_parameter_dictionary(d, joiner="-"):
