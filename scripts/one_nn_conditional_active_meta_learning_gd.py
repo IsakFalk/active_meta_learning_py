@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import mean_squared_error
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
 
 from active_meta_learning.data import (
@@ -283,15 +284,15 @@ if __name__=="__main__":
     fig, ax = plt.subplots(2, 1, figsize=(10, 10))
     df = pd.DataFrame(meta_test_error)
     # Historgram
-    bins = 'auto'
-    ax[0].hist(meta_test_error["uniform"], color="blue", alpha=0.4, label="uniform", bins=bins)
+    bins = int(meta_test_batches / 50)
+    ax[0].hist(meta_test_error["uniform"], color="blue", alpha=0.4, label="uniform", bins=bins, density=True)
     ax[0].axvline(np.mean(meta_test_error["uniform"]), color="blue", linestyle="--")
-    ax[0].hist(meta_test_error["kh_weights"], color="orange", alpha=0.4, label="KH (weights)", bins=bins)
+    ax[0].hist(meta_test_error["kh_weights"], color="orange", alpha=0.4, label="KH (weights)", bins=bins, density=True)
     ax[0].axvline(np.mean(meta_test_error["kh_weights"]), color="orange", linestyle="--")
-    ax[0].hist(meta_test_error["kh_data"], color="red", alpha=0.4, label="KH (data)", bins=bins)
+    ax[0].hist(meta_test_error["kh_data"], color="red", alpha=0.4, label="KH (data)", bins=bins, density=True)
     ax[0].axvline(np.mean(meta_test_error["kh_data"]), color="red", linestyle="--")
     ax[0].set_xlabel("MSE")
-    ax[0].set_ylabel("count")
+    ax[0].set_ylabel("Density")
     ax[0].set_title("Histogram (meta-test MSE), setting: {}".format(
         stringify_parameter_dictionary(param_dict, joiner=", ")
     ))
