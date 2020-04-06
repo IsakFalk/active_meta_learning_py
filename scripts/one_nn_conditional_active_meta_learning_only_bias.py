@@ -48,7 +48,7 @@ def stringify_parameter_dictionary(d, joiner="-"):
             l.append("{!s}={}".format(key, val))
     return joiner.join(l)
 
-        
+
 def create_environment_dataloader(k_shot, k_query, env, noise_w, noise_y, batch_size):
     # Create dataset and dataloader
     env_dataset = EnvironmentDataSet(
@@ -62,13 +62,16 @@ def create_environment_dataloader(k_shot, k_query, env, noise_w, noise_y, batch_
     )
     return dataloader
 
+
 def sample_tasks(dataloader, N):
     # Sample metainstances
     sampled_batches = aggregate_sampled_task_batches(dataloader, N)
     return sampled_batches
 
+
 def reorder_train_batches(train_batches, new_order):
     return [train_batches[i] for i in new_order]
+
 
 def unpack_batch(batch, t):
     """Return t'th datasets in batch"""
@@ -77,19 +80,25 @@ def unpack_batch(batch, t):
     test_input, test_target = map(lambda x: x[t], batch["test"])
     return train_input, train_target, test_input, test_target
 
+
 def npfy_batches(batches):
     new_batches = []
     for batch in batches:
         new_dict = {}
-        new_dict["train"] = (batch["train"][0].numpy().squeeze(), batch["train"][1].numpy().squeeze())
-        new_dict["test"] = (batch["test"][0].numpy().squeeze(), batch["test"][1].numpy().squeeze())
+        new_dict["train"] = (
+            batch["train"][0].numpy().squeeze(),
+            batch["train"][1].numpy().squeeze(),
+        )
+        new_dict["test"] = (
+            batch["test"][0].numpy().squeeze(),
+            batch["test"][1].numpy().squeeze(),
+        )
         new_dict["w"] = batch["w"].squeeze()
         new_batches.append(new_dict)
     return new_batches
 
 
-
-if __name__=="__main__":
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Cluster parameters (see hpc_cluster library docs)"
     )
@@ -121,16 +130,14 @@ if __name__=="__main__":
     k_query = 15
     median_heuristic_n_subsamples = 300
     meta_train_batches = 300
-    meta_train_batch_size = 1 # Hardcoded
+    meta_train_batch_size = 1  # Hardcoded
     meta_val_batches = 3000
-    meta_val_batch_size = 1 # Hardcoded
-    env = HypercubeWithKVertexGaussian(d, k=k, s2=noise_w/d)
+    meta_val_batch_size = 1  # Hardcoded
+    env = HypercubeWithKVertexGaussian(d, k=k, s2=noise_w / d)
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
-    train_dataset = EnvironmentDataSet(
-        k_shot, k_query, env, noise_w=0.0, noise_y=0.0
-    )
+    train_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w=0.0, noise_y=0.0)
     train_dataloader = DataLoader(
         train_dataset,
         collate_fn=train_dataset.collate_fn,
@@ -144,9 +151,7 @@ if __name__=="__main__":
 
     logging.info("Generating meta-val batches")
     # Sample meta-val
-    val_dataset = EnvironmentDataSet(
-        k_shot, k_query, env, noise_w=0.0, noise_y=0.0
-    )
+    val_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w=0.0, noise_y=0.0)
     val_dataloader = DataLoader(
         val_dataset, collate_fn=val_dataset.collate_fn, batch_size=meta_val_batch_size
     )
@@ -179,8 +184,9 @@ if __name__=="__main__":
     dataset_indices["kh_data"] = kh_D.sampled_order
     logging.info("Done")
 
-    class MetaKNNBias():
+    class MetaKNNBias:
         """Meta k_nn on weights, prediction on data"""
+
         def __init__(self, prototypes, distance, k=1):
             self.prototypes = prototypes
             self.distance = distance
@@ -197,7 +203,9 @@ if __name__=="__main__":
             for prototype in self.prototypes:
                 distances_to_w.append(distance(prototype, w))
             distances_to_w = np.array(distances_to_w)
-            self.closest_prototypes = self.prototypes[np.argsort(distances_to_w)[:self.k]]
+            self.closest_prototypes = self.prototypes[
+                np.argsort(distances_to_w)[: self.k]
+            ]
             # Get transfer-risk
             self.w_hat = np.mean(self.closest_prototypes, axis=0)
 
@@ -214,7 +222,6 @@ if __name__=="__main__":
             y_test_hat = self.predict(task)
             return loss(y_test_hat, test_target)
 
-
     meta_val_error = dict()
     meta_val_error["uniform"] = []
     meta_val_error["kh_weights"] = []
@@ -223,8 +230,12 @@ if __name__=="__main__":
     logging.info("Defining models")
     distance = lambda x, y: ((x - y) ** 2).sum()
     model_u = MetaKNNBias(train_task_ws[dataset_indices["uniform"]], distance=distance)
-    model_kh_w = MetaKNNBias(train_task_ws[dataset_indices["kh_weights"]], distance=distance)
-    model_kh_D = MetaKNNBias(train_task_ws[dataset_indices["kh_data"]], distance=distance)
+    model_kh_w = MetaKNNBias(
+        train_task_ws[dataset_indices["kh_weights"]], distance=distance
+    )
+    model_kh_D = MetaKNNBias(
+        train_task_ws[dataset_indices["kh_data"]], distance=distance
+    )
     logging.info("Done")
     logging.info("Getting meta validation errors")
     for val_task in val_batches:
@@ -241,23 +252,49 @@ if __name__=="__main__":
     df = pd.DataFrame(meta_val_error)
     # Historgram
     bins = int(meta_val_batches / 50)
-    ax[0].hist(meta_val_error["uniform"], color="blue", alpha=0.4, label="uniform", bins=bins, density=True)
+    ax[0].hist(
+        meta_val_error["uniform"],
+        color="blue",
+        alpha=0.4,
+        label="uniform",
+        bins=bins,
+        density=True,
+    )
     ax[0].axvline(np.mean(meta_val_error["uniform"]), color="blue", linestyle="--")
-    ax[0].hist(meta_val_error["kh_weights"], color="orange", alpha=0.4, label="KH (weights)", bins=bins, density=True)
+    ax[0].hist(
+        meta_val_error["kh_weights"],
+        color="orange",
+        alpha=0.4,
+        label="KH (weights)",
+        bins=bins,
+        density=True,
+    )
     ax[0].axvline(np.mean(meta_val_error["kh_weights"]), color="orange", linestyle="--")
-    ax[0].hist(meta_val_error["kh_data"], color="red", alpha=0.4, label="KH (data)", bins=bins, density=True)
+    ax[0].hist(
+        meta_val_error["kh_data"],
+        color="red",
+        alpha=0.4,
+        label="KH (data)",
+        bins=bins,
+        density=True,
+    )
     ax[0].axvline(np.mean(meta_val_error["kh_data"]), color="red", linestyle="--")
     ax[0].set_xlabel("MSE")
     ax[0].set_ylabel("count")
-    ax[0].set_title("Histogram (meta-val MSE), setting: {}".format(
-        stringify_parameter_dictionary(param_dict, joiner=", ")
-    ))
+    ax[0].set_title(
+        "Histogram (meta-val MSE), setting: {}".format(
+            stringify_parameter_dictionary(param_dict, joiner=", ")
+        )
+    )
     ax[0].legend()
     # Box plot
     df.boxplot(grid=False, rot=45, fontsize=15, ax=ax[1], showfliers=False)
     ax[1].set_title("Boxplot (outliers removed)")
     ax[1].set_ylabel("MSE")
     plt.tight_layout()
-    fig.savefig(args.output_dir / "performance_plot-{}.png".format(stringify_parameter_dictionary(param_dict)))
+    fig.savefig(
+        args.output_dir
+        / "performance_plot-{}.png".format(stringify_parameter_dictionary(param_dict))
+    )
     logging.info("Done")
     logging.info("Good bye!")

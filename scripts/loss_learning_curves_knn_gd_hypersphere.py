@@ -15,10 +15,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
-from active_meta_learning.data import (
-    EnvironmentDataSet,
-    UniformSphere
-)
+from active_meta_learning.data import EnvironmentDataSet, UniformSphere
 from active_meta_learning.data_utils import (
     aggregate_sampled_task_batches,
     convert_batches_to_fw_form,
@@ -38,6 +35,7 @@ from active_meta_learning.optimisation import KernelHerding
 from hpc_cluster.utils import extract_csv_to_dict
 
 GET_LOSS_EVERY = 1
+
 
 def stringify_parameter_dictionary(d, joiner="-"):
     l = []
@@ -315,17 +313,15 @@ if __name__ == "__main__":
     meta_test_error["uniform"] = np.zeros((n_runs, meta_test_batches))
     meta_test_error["kh_weights"] = np.zeros((n_runs, meta_test_batches))
     meta_test_error["kh_data"] = np.zeros((n_runs, meta_test_batches))
-    for i, num_prototypes in enumerate(
-        range(0, until_t, GET_LOSS_EVERY)
-    ):
+    for i, num_prototypes in enumerate(range(0, until_t, GET_LOSS_EVERY)):
         model_u.prototypes = get_task_ws(
-            train_task_ws, dataset_indices["uniform"][:num_prototypes+1]
+            train_task_ws, dataset_indices["uniform"][: num_prototypes + 1]
         )
         model_kh_w.prototypes = get_task_ws(
-            train_task_ws, dataset_indices["kh_weights"][:num_prototypes+1]
+            train_task_ws, dataset_indices["kh_weights"][: num_prototypes + 1]
         )
         model_kh_D.prototypes = get_task_ws(
-            train_task_ws, dataset_indices["kh_data"][:num_prototypes+1]
+            train_task_ws, dataset_indices["kh_data"][: num_prototypes + 1]
         )
         for j, test_task in enumerate(test_batches):
             # uniform
@@ -346,7 +342,13 @@ if __name__ == "__main__":
             test_batch_columns = ["meta_test_batch{}".format(col) for col in df.columns]
             df.columns = test_batch_columns
             df["t"] = t
-            df = pd.melt(df, id_vars=["t"], value_vars=test_batch_columns, var_name="meta_test_batch", value_name="MSE")
+            df = pd.melt(
+                df,
+                id_vars=["t"],
+                value_vars=test_batch_columns,
+                var_name="meta_test_batch",
+                value_name="MSE",
+            )
             df["algorithm"] = algorithm
             df.columns
             df_list.append(df)
@@ -357,7 +359,7 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(figsize=(12, 12))
     plot_sns_tsplot(meta_test_error, t, ax)
     fig.savefig(args.output_dir / "learning_curves.png")
-    
+
     # Dump data
     # Params
     hkl.dump(param_dict, args.output_dir / "parameters.hkl")
