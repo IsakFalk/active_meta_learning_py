@@ -148,16 +148,19 @@ class MetaKNNGD:
 
 
 def cross_validate(model, lrs, val_batches):
-    opt_lr = None
     opt_loss = np.inf
     for lr in lrs:
         model.learning_rate = lr
+        # Get avarerage test loss
+        current_loss = 0.0
         for val_task in val_batches:
-            current_loss = model.transfer_risk(val_task)
-            if current_loss < opt_loss:
-                opt_loss = current_loss
-                opt_lr = lr
-                return opt_lr, opt_loss
+            current_loss += model.transfer_risk(val_task)
+        current_loss /= len(val_batches)
+        # Keep best hyperparams
+        if current_loss < opt_loss:
+            opt_loss = current_loss
+            opt_lr = lr
+    return opt_lr, opt_loss
 
 
 if __name__ == "__main__":
@@ -277,7 +280,7 @@ if __name__ == "__main__":
     # to run cross-validation.
     # Later we will generate learning curves for a large range of number of
     # prototypes ordered by KH or uniform
-    cross_val_prototypes = 30
+    cross_val_prototypes = 50
     model_u = MetaKNNGD(
         prototypes=get_task_ws(
             train_task_ws, dataset_indices["uniform"][:cross_val_prototypes]

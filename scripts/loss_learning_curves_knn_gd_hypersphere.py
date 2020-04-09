@@ -144,16 +144,19 @@ class MetaKNNGD:
 
 
 def cross_validate(model, lrs, val_batches):
-    opt_lr = None
     opt_loss = np.inf
     for lr in lrs:
         model.learning_rate = lr
+        # Get avarerage validation loss
+        current_loss = 0.0
         for val_task in val_batches:
-            current_loss = model.transfer_risk(val_task)
-            if current_loss < opt_loss:
-                opt_loss = current_loss
-                opt_lr = lr
-                return opt_lr, opt_loss
+            current_loss += model.transfer_risk(val_task)
+        current_loss /= len(val_batches)
+        # Keep best hyperparams
+        if current_loss < opt_loss:
+            opt_loss = current_loss
+            opt_lr = lr
+    return opt_lr, opt_loss
 
 
 if __name__ == "__main__":
