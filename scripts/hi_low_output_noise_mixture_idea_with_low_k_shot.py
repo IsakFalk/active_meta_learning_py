@@ -489,20 +489,26 @@ def main(
         np.sum(uniform_data["mixture_history"], axis=1),
         color="blue",
         linestyle="",
-        marker="o"
+        marker="o",
     )
     ax[1].plot(
         np.arange(0, num_train_batches),
         np.sum(kh_D_data["mixture_history"], axis=1),
         color="red",
         linestyle="",
-        marker="x"
+        marker="x",
     )
-    ax[1].set_title("number of low-noise dataset in chosen batch at time t (moving average)")
-    ax[1].set_xlabel('timestep')
-    ax[1].set_ylabel('No. low-noise datsets in batch')
+    ax[1].set_title(
+        "number of low-noise dataset in chosen batch at time t (moving average)"
+    )
+    ax[1].set_xlabel("timestep")
+    ax[1].set_ylabel("No. low-noise datsets in batch")
     ax[1].set_ylim([0.0, meta_train_batch_size])
-    ax[1].axhline(meta_train_batch_size / 2, color="black", label="Average number of low-noise tasks in one batch")
+    ax[1].axhline(
+        meta_train_batch_size / 2,
+        color="black",
+        label="Average number of low-noise tasks in one batch",
+    )
     ax[1].legend()
 
     fig.savefig(save_path / "learning_curves.png")
@@ -565,7 +571,7 @@ if __name__ == "__main__":
     args.csv_path = Path(args.csv_path)
     args.output_dir = Path(args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # read in line of parameters
     param_dict = extract_csv_to_dict(args.csv_path, args.extract_line)
     d = param_dict["d"]
