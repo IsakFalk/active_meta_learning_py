@@ -337,7 +337,7 @@ if __name__ == "__main__":
 
     k_shot = 10
     k_query = 15
-    until_t = 50
+    until_t = 100
     median_heuristic_n_subsamples = 300
     meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
