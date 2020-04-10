@@ -91,7 +91,7 @@ def mmd2(K_xx, K_yy, K_xy, w_x=None, w_y=None):
     e = np.finfo(float).eps
     while mmd2 < 0.0:
         e *= 2
-        mmd2 += 2
+        mmd2 += 2 * e
 
     return mmd2
 
