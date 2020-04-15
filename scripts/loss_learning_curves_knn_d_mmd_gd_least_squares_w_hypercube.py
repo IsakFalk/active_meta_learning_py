@@ -40,17 +40,14 @@ from active_meta_learning.project_parameters import SCRIPTS_DIR
 from active_meta_learning.optimisation import KernelHerding
 from hpc_cluster.utils import extract_csv_to_dict
 
-logging.basicConfig(level=logging.INFO)
-
-
-GET_LOSS_EVERY = 1
+logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
 
 
 def stringify_parameter_dictionary(d, joiner="-"):
     l = []
     for key, val in d.items():
         if type(val) == float:
-            l.append("{!s}={:.2f}".format(key, val))
+            l.append("{!s}={:.4f}".format(key, val))
         elif type(val) == int:
             l.append("{!s}={}".format(key, val))
         else:
@@ -132,6 +129,40 @@ def _gaussian_kernel_mmd2_matrix(A, B, base_s2, meta_s2):
     return np.exp(-0.5 * M2 / meta_s2)
 
 
+def calculate_double_gaussian_median_heuristics(
+    A, n_base_subsamples=None, n_meta_subsamples=None
+):
+    """A.shape = (m, n, d), m is number of datasets, n is the size, d is the dimension"""
+    assert len(A.shape) == 3
+    m, n, d = A.shape
+    if n_base_subsamples is None:
+        vec_A = A.reshape(-1, d)
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
+    else:
+        vec_A = A.reshape(-1, d)
+        subsample_indices = np.random.permutation(vec_A.shape[0])[
+            :median_heuristic_n_subsamples
+        ]
+        vec_A = vec_A[subsample_indices]
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
+    base_s2 = median_heuristic(pairwise_square_dists)
+    M2 = np.zeros((m, m))
+    for i in range(m):
+        for j in range(i):
+            K_xx = gaussian_kernel_matrix(A[i], s2=base_s2)
+            # K_xx = K_xx + np.eye(n)*eps
+            K_yy = gaussian_kernel_matrix(A[j], s2=base_s2)
+            # K_yy = K_yy + np.eye(n)*eps
+            K_xy = gaussian_kernel_matrix(A[i], A[j], s2=base_s2)
+            M2[i, j] = mmd2(K_xx, K_yy, K_xy)
+    # Only have lower diagonal entries and diag=0
+    # this way we avoid computing m(m-1)/2 entries
+    M2 = M2 + M2.T
+    meta_s2 = median_heuristic(M2, n_meta_subsamples)
+
+    return base_s2, meta_s2
+
+
 def form_datasets_from_tasks(tasks):
     datasets = []
     for task in tasks:
@@ -144,6 +175,30 @@ def form_datasets_from_tasks(tasks):
     # adds new axis
     datasets = np.stack(datasets, axis=0)
     return datasets
+
+
+def cross_validate(model, alphas, lrs):
+    opt_loss = np.inf
+    for alpha in alphas:
+        for lr in lrs:
+            model.ridge_alpha = alpha
+            model.learning_rate = lr
+            model.calculate_ridge_regression_prototype_weights()
+            model.calculate_transfer_risk()
+            current_loss = np.nanmean(model.loss_matrix)
+            logging.info("Cross validating (alpha, lr): {}".format((alpha, lr)))
+            logging.info("Current loss: {}".format(current_loss))
+            # Keep best hyperparams
+            if current_loss < opt_loss:
+                logging.info(
+                    "Best (alpha, lr) so far {}, with loss {:.4f}".format(
+                        (alpha, lr), current_loss
+                    )
+                )
+                opt_loss = current_loss
+                opt_alpha = alpha
+                opt_lr = lr
+    return opt_alpha, opt_lr, opt_loss
 
 
 class MetaKNNGDExperiment:
@@ -161,25 +216,29 @@ class MetaKNNGDExperiment:
         adaptation_steps,
         ridge_alpha,
         learning_rate,
-        base_s2,
-        meta_s2,
         train_task_reordering,
     ):
         self.train_tasks = train_tasks
         self.test_tasks = test_tasks
-        self._form_datasets_from_tasks()
         # MMD matrix (T_tr, T_te) where T_te and T_te
         # is the number of train and test tasks respectively
-        self.M_tr_te = M_tr_te
+        self.M_tr_te_original = M_tr_te
         self.T_tr, self.T_te = len(train_tasks), len(test_tasks)
-        assert M_tr_te.shape == (self.T_tr, self.T_te)
+        assert self.M_tr_te_original.shape == (self.T_tr, self.T_te)
         self.k_nn = k_nn
         self.adaptation_steps = adaptation_steps
         self.ridge_alpha = ridge_alpha
         self.learning_rate = learning_rate
-        self.base_s2 = base_s2
-        self.meta_s2 = meta_s2
         self.train_task_reordering = train_task_reordering
+        self._reorder()
+        self._form_datasets_from_tasks()
+        assert self.M_tr_te.shape == (self.T_tr, self.T_te)
+
+    def _reorder(self):
+        self.train_tasks = [self.train_tasks[i] for i in self.train_task_reordering]
+        self.M_tr_te = self.M_tr_te_original[
+            np.ix_(self.train_task_reordering, np.arange(self.T_te))
+        ]
 
     def _form_datasets_from_tasks(self):
         self.train_datasets = form_datasets_from_tasks(self.train_tasks)
@@ -197,20 +256,21 @@ class MetaKNNGDExperiment:
             return w_hat
 
         self.prototype_ridge_weights = []
-        for dataset in self.datasets:
+        for dataset in self.train_datasets:
             self.prototype_ridge_weights.append(get_weights(dataset))
         self.prototype_ridge_weights = np.array(self.prototype_ridge_weights).squeeze()
+        assert len(self.prototype_ridge_weights) == self.T_tr
 
     def calculate_ridge_regression_prototype_weights(self):
         self._get_ridge_regression_prototype_weights()
 
     def _adapt(self, i, t):
-        """Adapt to one task with index i when meta-train set of size t"""
+        """Adapt to one task with index i when meta-train set is of size t"""
         # Unpack task
         test_task = self.test_tasks[i]
         X_tr, y_tr = test_task["train"]
         # Find K nearest tasks using M_tr_te
-        distances = M_tr_te[self.train_task_reordering[:t], i]
+        distances = self.M_tr_te[:t, i]
 
         ridge_weights_of_knn = self.prototype_ridge_weights[
             np.argsort(distances)[: self.k_nn]
@@ -232,8 +292,8 @@ class MetaKNNGDExperiment:
     def calculate_transfer_risk(self):
         """Calculate the transfer risk"""
         # The loss matrix is a matrix of size (T_tr, T_te)
-        # Note that the first self.k_nn columns are nans since
-        # we do not fill them in as not enough prototypes are available
+        # Note that the first self.k_nn columns are nans selfince
+        # we do not fill them in as not eno ugh prototypes are available
         self.loss_matrix = np.zeros((self.T_tr, self.T_te))
         self.loss_matrix[: self.k_nn, :] = np.nan
         # Each t represents using meta-train instances up until t according to
@@ -242,7 +302,6 @@ class MetaKNNGDExperiment:
         for t in range(self.k_nn, self.T_tr):
             for i in range(self.T_te):
                 self.loss_matrix[t, i] = self._loss(i, t)
-        self.loss_matrix = self.loss_matrix
 
 
 def cross_validate(model, alphas, lrs):
@@ -259,7 +318,7 @@ def cross_validate(model, alphas, lrs):
             # Keep best hyperparams
             if current_loss < opt_loss:
                 logging.info(
-                    "Best (alpha, lr) so far {}, with loss {:.2f}".format(
+                    "Best (alpha, lr) so far {}, with loss {:.4f}".format(
                         (alpha, lr), current_loss
                     )
                 )
@@ -333,19 +392,15 @@ if __name__ == "__main__":
 
     k_shot = 10
     k_query = 15
-    until_t = 100
-    median_heuristic_n_subsamples = 300
-    meta_train_batches = 400
+    until_t = None  # 100
+    median_heuristic_n_subsamples = 100  # 300
+    meta_train_batches = 100  # 400
     meta_train_batch_size = 1  # Hardcoded
-    meta_val_batches = 500
+    meta_val_batches = 100  # 500
     meta_val_batch_size = 1  # Hardcoded
-    meta_test_batches = 500
+    meta_test_batches = 100  # 500
     meta_test_batch_size = 1  # Hardcoded
     env = HypercubeWithKVertexGaussian(d, k=k, s2=noise_w / d)
-
-    assert (
-        until_t % GET_LOSS_EVERY == 0
-    ), "meta_train_batches needs to be divisible by GET_LOSS_EVERY"
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
@@ -394,13 +449,9 @@ if __name__ == "__main__":
     base_s2_D, meta_s2_D = calculate_double_gaussian_median_heuristics(
         train_datasets, n_base_subsamples=median_heuristic_n_subsamples
     )
-    # Calculate M_tr_te
-    M_tr_val = _gaussian_kernel_mmd2_matrix(
-        train_datasets, val_datasets, base_s2_D, meta_s2_D
-    )
-    M_tr_te = _gaussian_kernel_mmd2_matrix(
-        train_datasets, test_datasets, base_s2_D, meta_s2_D
-    )
+
+    M_tr_val = np.sqrt(_mmd2_matrix(train_datasets, val_datasets, base_s2_D))
+    M_tr_te = np.sqrt(_mmd2_matrix(train_datasets, test_datasets, base_s2_D))
 
     logging.info("Generating prototypes for:")
     dataset_indices = dict()
@@ -419,12 +470,18 @@ if __name__ == "__main__":
     logging.info("Done")
     # KH data
     logging.info("KH Data")
-    K_D = gaussian_kernel_mmd2_matrix(train_batches_kh, median_heuristic_n_subsamples)
+    K_D = _gaussian_kernel_mmd2_matrix(
+        train_datasets, train_datasets, base_s2_D, meta_s2_D
+    )
     kh_D = KernelHerding(K_D)
     kh_D.run()
     dataset_indices["kh_data"] = kh_D.sampled_order
     logging.info("Done")
 
+    # Will cross validate anyway
+    # Better to fail if it doesn't work
+    ridge_alpha = None
+    learning_rate = None
     logging.info("Defining models")
     model_u = MetaKNNGDExperiment(
         train_batches,
@@ -432,10 +489,8 @@ if __name__ == "__main__":
         M_tr_val,
         k_nn,
         adaptation_steps=1,
-        ridge_alpha=0.1,
-        learning_rate=0.1,
-        base_s2=base_s2_D,
-        meta_s2=meta_s2_D,
+        ridge_alpha=ridge_alpha,
+        learning_rate=learning_rate,
         train_task_reordering=dataset_indices["uniform"],
     )
     model_kh_w = MetaKNNGDExperiment(
@@ -444,10 +499,8 @@ if __name__ == "__main__":
         M_tr_val,
         k_nn,
         adaptation_steps=1,
-        ridge_alpha=0.1,
-        learning_rate=0.1,
-        base_s2=base_s2_D,
-        meta_s2=meta_s2_D,
+        ridge_alpha=ridge_alpha,
+        learning_rate=learning_rate,
         train_task_reordering=dataset_indices["kh_weights"],
     )
     model_kh_D = MetaKNNGDExperiment(
@@ -456,10 +509,8 @@ if __name__ == "__main__":
         M_tr_val,
         k_nn,
         adaptation_steps=1,
-        ridge_alpha=0.1,
-        learning_rate=0.1,
-        base_s2=base_s2_D,
-        meta_s2=meta_s2_D,
+        ridge_alpha=ridge_alpha,
+        learning_rate=learning_rate,
         train_task_reordering=dataset_indices["kh_data"],
     )
     logging.info("Done")
@@ -475,26 +526,19 @@ if __name__ == "__main__":
     alpha_kh_D, lr_kh_D, kh_D_cross_val_loss = cross_validate(model_kh_D, alphas, lrs)
     logging.info("Optimal learning rates and losses found:")
     logging.info(
-        "U: alpha={}, lr={}, loss={:.2f}".format(alpha_u, lr_u, u_cross_val_loss)
+        "U: alpha={}, lr={}, loss={:.4f}".format(alpha_u, lr_u, u_cross_val_loss)
     )
     logging.info(
-        "KH_W: alpha={}, lr={}, loss={:.2f}".format(
+        "KH_W: alpha={}, lr={}, loss={:.4f}".format(
             alpha_kh_w, lr_kh_w, kh_w_cross_val_loss
         )
     )
     logging.info(
-        "KH_D: alpha={}, lr={}, loss={:.2f}".format(
+        "KH_D: alpha={}, lr={}, loss={:.4f}".format(
             alpha_kh_D, lr_kh_D, kh_D_cross_val_loss
         )
     )
     # Set optimal hyperparameters
-    model_u.ridge_alpha = alpha_u
-    model_u.learning_rate = lr_u
-    model_kh_w.ridge_alpha = alpha_kh_w
-    model_kh_w.learning_rate = lr_kh_w
-    model_kh_D.ridge_alpha = alpha_kh_D
-    model_kh_D.learning_rate = lr_kh_D
-
     experiment_data = dict()
     experiment_data["uniform"] = {
         "optimal_parameters": {"ridge_alpha": alpha_u, "learning_rate": lr_u}
@@ -508,19 +552,47 @@ if __name__ == "__main__":
 
     logging.info("Getting learning curves for meta test error")
     meta_test_error = dict()
+    model_u = MetaKNNGDExperiment(
+        train_batches,
+        test_batches,
+        M_tr_te,
+        k_nn,
+        adaptation_steps=1,
+        ridge_alpha=alpha_u,
+        learning_rate=lr_u,
+        train_task_reordering=dataset_indices["uniform"],
+    )
+    model_kh_w = MetaKNNGDExperiment(
+        train_batches,
+        test_batches,
+        M_tr_te,
+        k_nn,
+        adaptation_steps=1,
+        ridge_alpha=alpha_kh_w,
+        learning_rate=lr_kh_w,
+        train_task_reordering=dataset_indices["kh_weights"],
+    )
+    model_kh_D = MetaKNNGDExperiment(
+        train_batches,
+        test_batches,
+        M_tr_te,
+        k_nn,
+        adaptation_steps=1,
+        ridge_alpha=alpha_kh_D,
+        learning_rate=lr_kh_D,
+        train_task_reordering=dataset_indices["kh_data"],
+    )
+
     logging.info("Uniform")
-    model_u.M_tr_te = M_tr_te
     model_u.calculate_ridge_regression_prototype_weights()
     model_u.calculate_transfer_risk()
     meta_test_error["uniform"] = model_u.loss_matrix
     logging.info("KH weights")
-    model_kh_w.M_tr_te = M_tr_te
     model_kh_w.calculate_ridge_regression_prototype_weights()
     model_kh_w.calculate_transfer_risk()
     meta_test_error["kh_weights"] = model_kh_w.loss_matrix
     logging.info("KH data")
     model_kh_D.calculate_ridge_regression_prototype_weights()
-    model_kh_D.M_tr_te = M_tr_te
     model_kh_D.calculate_transfer_risk()
     meta_test_error["kh_data"] = model_kh_D.loss_matrix
     logging.info("Done")
@@ -530,9 +602,12 @@ if __name__ == "__main__":
     experiment_data["kh_data"]["test_error"] = meta_test_error["kh_data"]
 
     # We just plot a learning curve with error bars of 1 std
-    def plot_sns_tsplot(meta_test_error, until_t, ax):
+    def plot_sns_tsplot(meta_test_error, ax, until_t=None):
         """mean_test_error is dict with keys being the algorithm and values (n_runs, meta_val_batches)"""
+        if until_t is None:
+            until_t = len(list(meta_test_error.values())[0]) - 1
         df_list = []
+        # Massage data into long format
         for algorithm in meta_test_error.keys():
             df = pd.DataFrame(data=meta_test_error[algorithm])
             test_batch_columns = ["meta_test_batch{}".format(col) for col in df.columns]
@@ -553,7 +628,7 @@ if __name__ == "__main__":
         return ax
 
     fig, ax = plt.subplots(figsize=(12, 12))
-    plot_sns_tsplot(meta_test_error, until_t, ax)
+    plot_sns_tsplot(meta_test_error, ax, until_t)
     fig.savefig(
         args.output_dir
         / "learning_curves-{}.png".format(stringify_parameter_dictionary(param_dict))
