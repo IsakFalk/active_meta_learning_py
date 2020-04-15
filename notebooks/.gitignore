@@ -1,0 +1,4 @@
+.ob_jupyter
+org_src_output_dir/
+_minted*
+!*.pdf
