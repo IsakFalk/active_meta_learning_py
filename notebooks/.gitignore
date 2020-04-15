@@ -5,11 +5,11 @@ org_src_output_dir/
 _minted*
 .auctex*/
 
-# python
+# Only keep org files around
+# can create documents from this
 *.py
-
-
-
+*.pdf
+*.tex
 
 # Created by https://www.gitignore.io/api/latex
 # Edit at https://www.gitignore.io/?templates=latex
