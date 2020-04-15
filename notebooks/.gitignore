@@ -1,8 +1,14 @@
+# Org mode
+# literate programming
 .ob_jupyter/
 org_src_output_dir/
 _minted*
-!*.pdf
 .auctex*/
+
+# python
+*.py
+
+
 
 
 # Created by https://www.gitignore.io/api/latex
