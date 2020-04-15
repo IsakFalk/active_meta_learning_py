@@ -396,13 +396,13 @@ if __name__ == "__main__":
 
     k_shot = 10
     k_query = 15
-    until_t = None  # 100
-    median_heuristic_n_subsamples = 100  # 300
-    meta_train_batches = 100  # 400
+    until_t = 100
+    median_heuristic_n_subsamples = 300
+    meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
-    meta_val_batches = 100  # 500
+    meta_val_batches = 500
     meta_val_batch_size = 1  # Hardcoded
-    meta_test_batches = 100  # 500
+    meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
     mus, kappas, ps = create_vmf_params(d, k_mixtures, kappa)
     env = VonMisesFisherMixture(mus, kappas, ps)
