@@ -1,6 +1,6 @@
 # Org mode
 # literate programming
-.ob_jupyter/*
+.ob-jupyter/
 org_src_output_dir/
 _minted*
 .auctex*/
