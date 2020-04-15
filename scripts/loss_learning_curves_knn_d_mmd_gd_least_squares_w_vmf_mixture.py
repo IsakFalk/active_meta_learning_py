@@ -68,7 +68,7 @@ def create_environment_dataloader(k_shot, k_query, env, noise_w, noise_y, batch_
 def create_vmf_params(d, k_mixtures, kappa):
     mus = np.random.randn(k_mixtures, d)
     mus /= np.linalg.norm(mus, axis=1).reshape(-1, 1)
-    kappas = np.ones(k_mixtures) * kappa / d
+    kappas = np.ones(k_mixtures) * kappa * d
     ps = np.ones(k_mixtures) / k_mixtures
     return mus, kappas, ps
 
