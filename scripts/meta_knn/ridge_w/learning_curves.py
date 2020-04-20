@@ -398,6 +398,7 @@ if __name__ == "__main__":
     meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
+    param_dict["env_attributes"] = vars(env)
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
