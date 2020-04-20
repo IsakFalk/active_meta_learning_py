@@ -170,3 +170,4 @@ dmypy.json
 /**/experiments/**/*
 /**/experiments/*
 /cluster_job_submissions/*
+!/data/settings
