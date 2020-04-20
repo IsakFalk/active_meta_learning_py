@@ -1,7 +1,16 @@
 import json
 
+import random
 import numpy as np
-import torch
+import torch as th
+
+
+def set_random_seeds(seed):
+    """Set all random seeds"""
+    random.seed(seed)
+    np.random.seed(seed)
+    th.manual_seed(0)
+
 
 ################
 # Sphere data  #
