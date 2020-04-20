@@ -2,14 +2,14 @@ import json
 
 import random
 import numpy as np
-import torch as th
+import torch
 
 
 def set_random_seeds(seed):
     """Set all random seeds"""
     random.seed(seed)
     np.random.seed(seed)
-    th.manual_seed(0)
+    torch.manual_seed(0)
 
 
 ################
