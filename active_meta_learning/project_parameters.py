@@ -2,7 +2,7 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).parent.parent
 SCRIPTS_DIR = PROJECT_DIR / "scripts"
-JOB_SUBMISSION_DIR = PROJECT_DIR / "cluster_job_submissions"
+JOB_SUBMISSION_DIR = PROJECT_DIR / "job_submission_files"
 DATA_DIR = PROJECT_DIR / "data"
 INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
