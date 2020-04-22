@@ -301,6 +301,78 @@ class MetaKNNGDExperiment:
                 self.loss_matrix[t, i] = self._loss(i, t)
 
 
+class GDLeastSquares:
+    def __init__(self, learning_rate, adaptation_steps):
+        self.learning_rate = learning_rate
+        self.adaptation_steps = adaptation_steps
+
+    def fit(self, X_tr, y_tr):
+        n, d = X_tr.shape
+        self.w_hat = np.zeros(d)
+        for _ in range(self.adaptation_steps):
+            self.w_hat -= self.learning_rate * 2 * X_tr.T @ (X_tr @ self.w_hat - y_tr)
+        return self.w_hat
+
+    def predict(self, X_te):
+        return X_te @ self.w_hat
+
+
+class IndependentTaskLearning:
+    def __init__(self, tasks, algorithm, loss=mean_squared_error):
+        """
+        :param tasks: tasks that ITL will be performed over by algorithm
+        :type tasks: list of tasks, where each task is a dict with keys ("train", "test")
+            and values (X_tr, y_tr), tuple of numpy arrays
+        :param algorithm: algorithm implementing sklearn fit / predict framework
+        :type algorithm: instance of predictor class with fit / predict defined
+        :param loss: loss function taking loss(y, y_pred)
+        :type loss: loss(y: np.ndarray, y_pred: np.ndarray) -> float
+        """
+        self.tasks = tasks
+        self.algorithm = algorithm
+        self.loss = loss
+
+    def _fit(self, task):
+        """Fit `algorithm` to the i'th task"""
+        X_tr, y_tr = task["train"]
+        return self.algorithm.fit(X_tr, y_tr)
+
+    def _predict(self, task):
+        X_te, y_te = task["test"]
+        return self.algorithm.predict(X_te)
+
+    def _loss(self, task):
+        _, y_te = task["test"]
+        self._fit(task)
+        y_pred = self._predict(task)
+        return self.loss(y_pred, y_te)
+
+    def calculate_transfer_risk(self):
+        # Collect loss for each task in tasks
+        self.losses = []
+        for task in self.tasks:
+            self.losses.append(self._loss(task))
+        self.losses = np.array(self.losses)
+
+
+def cross_validate_itl(model, lrs):
+    opt_loss = np.inf
+    for lr in lrs:
+        model.algorithm.learning_rate = lr
+        model.calculate_transfer_risk()
+        current_loss = np.mean(model.losses)
+        logging.info("Cross validating (lr): {}".format(lr))
+        logging.info("Current loss: {}".format(current_loss))
+        # Keep best hyperparams
+        if current_loss < opt_loss:
+            logging.info(
+                "Best (lr) so far {}, with loss {:.4f}".format(lr, current_loss)
+            )
+            opt_loss = current_loss
+            opt_lr = lr
+    return opt_lr, opt_loss
+
+
 def cross_validate(model, alphas, lrs):
     opt_loss = np.inf
     for alpha in alphas:
@@ -536,6 +608,15 @@ if __name__ == "__main__":
             alpha_kh_D, lr_kh_D, kh_D_cross_val_loss
         )
     )
+    # Optimising for ITL
+    logging.info("Cross validation for ITL")
+    one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
+    itl = IndependentTaskLearning(val_batches, one_step_gd)
+    lr_itl, itl_cross_val_loss = cross_validate_itl(itl, lrs)
+    logging.info("Optimal learning rate and loss found:")
+    logging.info("lr={}, loss={:.4f}".format(lr_itl, itl_cross_val_loss))
+    itl.algorithm.learning_rate = lr_itl
+
     # Set optimal hyperparameters
     experiment_data = dict()
     experiment_data["uniform"] = {
@@ -546,6 +627,9 @@ if __name__ == "__main__":
     }
     experiment_data["kh_data"] = {
         "optimal_parameters": {"ridge_alpha": alpha_kh_D, "learning_rate": lr_kh_D}
+    }
+    experiment_data["itl"] = {
+        "optimal_parameters": {"ridge_alpha": None, "learning_rate": lr_itl}
     }
 
     logging.info("Getting learning curves for meta test error")
@@ -593,11 +677,17 @@ if __name__ == "__main__":
     model_kh_D.calculate_ridge_regression_prototype_weights()
     model_kh_D.calculate_transfer_risk()
     meta_test_error["kh_data"] = model_kh_D.loss_matrix
+    logging.info("ITL")
+    itl.tasks = test_batches
+    itl.calculate_transfer_risk()
+    meta_test_error["itl"] = itl.losses
+
     logging.info("Done")
 
     experiment_data["uniform"]["test_error"] = meta_test_error["uniform"]
     experiment_data["kh_weights"]["test_error"] = meta_test_error["kh_weights"]
     experiment_data["kh_data"]["test_error"] = meta_test_error["kh_data"]
+    experiment_data["itl"]["test_error"] = meta_test_error["itl"]
 
     # Dump data
     # Params

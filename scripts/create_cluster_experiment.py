@@ -17,8 +17,8 @@ array_job = ArrayJob(
     job_submission_files_dir=project_parameters.JOB_SUBMISSION_DIR,
     job_output_dir=project_parameters.JOB_OUTPUT_DIR,
     program="python3",
-    tmem=4,
-    h_vmem=4,
+    tmem=8,
+    h_vmem=8,
     h_rt=3600 * 4,
     gpu=False,
 )
