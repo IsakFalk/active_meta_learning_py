@@ -174,30 +174,6 @@ def form_datasets_from_tasks(tasks):
     return datasets
 
 
-def cross_validate(model, alphas, lrs):
-    opt_loss = np.inf
-    for alpha in alphas:
-        for lr in lrs:
-            model.ridge_alpha = alpha
-            model.learning_rate = lr
-            model.calculate_ridge_regression_prototype_weights()
-            model.calculate_transfer_risk()
-            current_loss = np.nanmean(model.loss_matrix)
-            logging.info("Cross validating (alpha, lr): {}".format((alpha, lr)))
-            logging.info("Current loss: {}".format(current_loss))
-            # Keep best hyperparams
-            if current_loss < opt_loss:
-                logging.info(
-                    "Best (alpha, lr) so far {}, with loss {:.4f}".format(
-                        (alpha, lr), current_loss
-                    )
-                )
-                opt_loss = current_loss
-                opt_alpha = alpha
-                opt_lr = lr
-    return opt_alpha, opt_lr, opt_loss
-
-
 class MetaKNNGDExperiment:
     """Full experiment optimised for speed
 
@@ -317,6 +293,17 @@ class GDLeastSquares:
         return X_te @ self.w_hat
 
 
+class RidgeRegression:
+    def __init__(self, alpha):
+        self.alpha = alpha
+
+    def fit(self, X_tr, y_tr):
+        self.w_hat = Ridge(alpha=self.alpha, fit_intercept=False).fit(X_tr, y_tr).coef_
+
+    def predict(self, X_te):
+        return X_te @ self.w_hat
+
+
 class IndependentTaskLearning:
     def __init__(self, tasks, algorithm, loss=mean_squared_error):
         """
@@ -355,24 +342,6 @@ class IndependentTaskLearning:
         self.losses = np.array(self.losses)
 
 
-def cross_validate_itl(model, lrs):
-    opt_loss = np.inf
-    for lr in lrs:
-        model.algorithm.learning_rate = lr
-        model.calculate_transfer_risk()
-        current_loss = np.mean(model.losses)
-        logging.info("Cross validating (lr): {}".format(lr))
-        logging.info("Current loss: {}".format(current_loss))
-        # Keep best hyperparams
-        if current_loss < opt_loss:
-            logging.info(
-                "Best (lr) so far {}, with loss {:.4f}".format(lr, current_loss)
-            )
-            opt_loss = current_loss
-            opt_lr = lr
-    return opt_lr, opt_loss
-
-
 def cross_validate(model, alphas, lrs):
     opt_loss = np.inf
     for alpha in alphas:
@@ -395,6 +364,45 @@ def cross_validate(model, alphas, lrs):
                 opt_alpha = alpha
                 opt_lr = lr
     return opt_alpha, opt_lr, opt_loss
+
+
+# Maybe refactor this in a smarter way
+
+
+def cross_validate_itl_one_step_gd(model, lrs):
+    opt_loss = np.inf
+    for lr in lrs:
+        model.algorithm.learning_rate = lr
+        model.calculate_transfer_risk()
+        current_loss = np.mean(model.losses)
+        logging.info("Cross validating (lr): {}".format(lr))
+        logging.info("Current loss: {}".format(current_loss))
+        # Keep best hyperparams
+        if current_loss < opt_loss:
+            logging.info(
+                "Best (lr) so far {}, with loss {:.4f}".format(lr, current_loss)
+            )
+            opt_loss = current_loss
+            opt_lr = lr
+    return opt_lr, opt_loss
+
+
+def cross_validate_itl_rr(model, alphas):
+    opt_loss = np.inf
+    for alpha in alphas:
+        model.algorithm.alpha = alpha
+        model.calculate_transfer_risk()
+        current_loss = np.mean(model.losses)
+        logging.info("Cross validating (alpha): {}".format(alpha))
+        logging.info("Current loss: {}".format(current_loss))
+        # Keep best hyperparams
+        if current_loss < opt_loss:
+            logging.info(
+                "Best (alpha) so far {}, with loss {:.4f}".format(alpha, current_loss)
+            )
+            opt_loss = current_loss
+            opt_alpha = alpha
+    return opt_alpha, opt_loss
 
 
 def calculate_double_gaussian_median_heuristics(
@@ -610,12 +618,25 @@ if __name__ == "__main__":
     )
     # Optimising for ITL
     logging.info("Cross validation for ITL")
+    logging.info("One-step GD")
     one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
-    itl = IndependentTaskLearning(val_batches, one_step_gd)
-    lr_itl, itl_cross_val_loss = cross_validate_itl(itl, lrs)
+    itl_one_step_gd = IndependentTaskLearning(val_batches, one_step_gd)
+    lr_itl_one_step_gd, itl_one_step_gd_cross_val_loss = cross_validate_itl_one_step_gd(
+        itl_one_step_gd, lrs
+    )
     logging.info("Optimal learning rate and loss found:")
-    logging.info("lr={}, loss={:.4f}".format(lr_itl, itl_cross_val_loss))
-    itl.algorithm.learning_rate = lr_itl
+    logging.info(
+        "lr={}, loss={:.4f}".format(lr_itl_one_step_gd, itl_one_step_gd_cross_val_loss)
+    )
+    itl_one_step_gd.algorithm.learning_rate = lr_itl_one_step_gd
+
+    logging.info("Ridge Reg")
+    rr = RidgeRegression(alpha=None)
+    itl_rr = IndependentTaskLearning(val_batches, rr)
+    alpha_itl_rr, itl_rr_cross_val_loss = cross_validate_itl_rr(itl_rr, alphas)
+    logging.info("Optimal alpha and loss found:")
+    logging.info("alpha={}, loss={:.4f}".format(alpha_itl_rr, itl_rr_cross_val_loss))
+    itl_rr.algorithm.alpha = alpha_itl_rr
 
     # Set optimal hyperparameters
     experiment_data = dict()
@@ -629,7 +650,15 @@ if __name__ == "__main__":
         "optimal_parameters": {"ridge_alpha": alpha_kh_D, "learning_rate": lr_kh_D}
     }
     experiment_data["itl"] = {
-        "optimal_parameters": {"ridge_alpha": None, "learning_rate": lr_itl}
+        "ridge": {
+            "optimal_parameters": {
+                "ridge_alpha": None,
+                "learning_rate": lr_itl_one_step_gd,
+            }
+        },
+        "one_step_gd": {
+            "optimal_parameters": {"ridge_alpha": alpha_itl_rr, "learning_rate": None}
+        },
     }
 
     logging.info("Getting learning curves for meta test error")
@@ -678,16 +707,26 @@ if __name__ == "__main__":
     model_kh_D.calculate_transfer_risk()
     meta_test_error["kh_data"] = model_kh_D.loss_matrix
     logging.info("ITL")
-    itl.tasks = test_batches
-    itl.calculate_transfer_risk()
-    meta_test_error["itl"] = itl.losses
+    logging.info("Ridge")
+    itl_rr.tasks = test_batches
+    itl_rr.calculate_transfer_risk()
+    logging.info("One-step GD")
+    itl_one_step_gd.tasks = test_batches
+    itl_one_step_gd.calculate_transfer_risk()
+    meta_test_error["itl"] = {
+        "ridge": itl_rr.losses,
+        "one_step_gd": itl_one_step_gd.losses,
+    }
 
     logging.info("Done")
 
     experiment_data["uniform"]["test_error"] = meta_test_error["uniform"]
     experiment_data["kh_weights"]["test_error"] = meta_test_error["kh_weights"]
     experiment_data["kh_data"]["test_error"] = meta_test_error["kh_data"]
-    experiment_data["itl"]["test_error"] = meta_test_error["itl"]
+    experiment_data["itl"]["ridge"] = {"test_error": meta_test_error["itl"]["ridge"]}
+    experiment_data["itl"]["one_step_gd"] = {
+        "test_error": meta_test_error["itl"]["one_step_gd"]
+    }
 
     # Dump data
     # Params
