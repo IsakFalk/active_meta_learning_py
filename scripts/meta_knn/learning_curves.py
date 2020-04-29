@@ -1,43 +1,49 @@
 import argparse
-from pathlib import Path
 import logging
+from pathlib import Path
 
 import hickle as hkl
-from tqdm import tqdm
-import numpy as np
-import torch as th
-from scipy.spatial.distance import pdist, squareform
-from torch import nn
-from torch.utils.data import DataLoader
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_squared_error
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
 import pandas as pd
+import seaborn as sns
+import torch as th
+from scipy.spatial.distance import pdist, squareform
+from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import ParameterGrid
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
+from torch import nn
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from active_meta_learning.data import EnvironmentDataSet, UniformSphere
 from active_meta_learning.data_utils import (
     aggregate_sampled_task_batches,
+    coalesce_train_and_test_in_dicts,
     convert_batches_to_fw_form,
+    convert_batches_to_np,
     get_task_parameters,
     remove_batched_dimension_in_D,
-    convert_batches_to_np,
-    coalesce_train_and_test_in_dicts,
     reorder_list,
     set_random_seeds,
 )
 from active_meta_learning.kernels import (
-    mmd2,
     gaussian_kernel_matrix,
     gaussian_kernel_mmd2_matrix,
     median_heuristic,
+    mmd2,
 )
-from active_meta_learning.project_parameters import SCRIPTS_DIR, SETTINGS_DATA_DIR
 from active_meta_learning.optimisation import KernelHerding
+from active_meta_learning.project_parameters import SCRIPTS_DIR, SETTINGS_DATA_DIR
 from hpc_cluster.utils import extract_csv_to_dict
 
 logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 def stringify_parameter_dictionary(d, joiner="-"):
@@ -126,40 +132,6 @@ def _gaussian_kernel_mmd2_matrix(A, B, base_s2, meta_s2):
     return np.exp(-0.5 * M2 / meta_s2)
 
 
-def calculate_double_gaussian_median_heuristics(
-    A, n_base_subsamples=None, n_meta_subsamples=None
-):
-    """A.shape = (m, n, d), m is number of datasets, n is the size, d is the dimension"""
-    assert len(A.shape) == 3
-    m, n, d = A.shape
-    if n_base_subsamples is None:
-        vec_A = A.reshape(-1, d)
-        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
-    else:
-        vec_A = A.reshape(-1, d)
-        subsample_indices = np.random.permutation(vec_A.shape[0])[
-            :median_heuristic_n_subsamples
-        ]
-        vec_A = vec_A[subsample_indices]
-        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
-    base_s2 = median_heuristic(pairwise_square_dists)
-    M2 = np.zeros((m, m))
-    for i in range(m):
-        for j in range(i):
-            K_xx = gaussian_kernel_matrix(A[i], s2=base_s2)
-            # K_xx = K_xx + np.eye(n)*eps
-            K_yy = gaussian_kernel_matrix(A[j], s2=base_s2)
-            # K_yy = K_yy + np.eye(n)*eps
-            K_xy = gaussian_kernel_matrix(A[i], A[j], s2=base_s2)
-            M2[i, j] = mmd2(K_xx, K_yy, K_xy)
-    # Only have lower diagonal entries and diag=0
-    # this way we avoid computing m(m-1)/2 entries
-    M2 = M2 + M2.T
-    meta_s2 = median_heuristic(M2, n_meta_subsamples)
-
-    return base_s2, meta_s2
-
-
 def form_datasets_from_tasks(tasks):
     datasets = []
     for task in tasks:
@@ -174,7 +146,45 @@ def form_datasets_from_tasks(tasks):
     return datasets
 
 
-class MetaKNNGDExperiment:
+class RidgeRegPrototypeEstimator:
+    def __init__(self, alpha):
+        self.alpha = alpha
+
+    def transform(self, tasks):
+        datasets = form_datasets_from_tasks(tasks)
+        weights = np.array(
+            [self._get_weights(dataset).squeeze() for dataset in datasets]
+        )
+        return weights
+
+    def _get_weights(self, dataset):
+        X, y = dataset[:, :-1], dataset[:, -1:]
+        check_X_y(X, y)
+        return Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
+
+    def set_params(self, **params):
+        self.alpha = params["alpha"]
+
+    def get_params(self):
+        return {"alpha": self.alpha}
+
+
+class TrueWeightPrototypeEstimator:
+    def __init__(self):
+        pass
+
+    def transform(self, tasks):
+        weights = np.array([task["w"].squeeze() for task in tasks])
+        return weights
+
+    def set_params(self, **params):
+        pass
+
+    def get_params(self):
+        return {}
+
+
+class MetaKNNExperiment:
     """Full experiment optimised for speed
 
     This does not adhere to the sklearn like
@@ -184,32 +194,29 @@ class MetaKNNGDExperiment:
         self,
         train_tasks,
         test_tasks,
-        M_tr_te,
+        dist_tr_te,
+        base_algorithm,
         k_nn,
-        adaptation_steps,
-        ridge_alpha,
-        learning_rate,
         train_task_reordering,
+        prototype_estimator,  # transformer prototype
     ):
         self.train_tasks = train_tasks
         self.test_tasks = test_tasks
-        # MMD matrix (T_tr, T_te) where T_te and T_te
-        # is the number of train and test tasks respectively
-        self.M_tr_te_original = M_tr_te
-        self.T_tr, self.T_te = len(train_tasks), len(test_tasks)
-        assert self.M_tr_te_original.shape == (self.T_tr, self.T_te)
+        self.dist_tr_te = dist_tr_te
+        self.base_algorithm = base_algorithm
         self.k_nn = k_nn
-        self.adaptation_steps = adaptation_steps
-        self.ridge_alpha = ridge_alpha
-        self.learning_rate = learning_rate
         self.train_task_reordering = train_task_reordering
+        self.prototype_estimator = prototype_estimator
+
+        self.T_tr, self.T_te = len(train_tasks), len(test_tasks)
+        assert self.dist_tr_te.shape == (self.T_tr, self.T_te)
         self._reorder()
         self._form_datasets_from_tasks()
-        assert self.M_tr_te.shape == (self.T_tr, self.T_te)
+        self.calculate_prototypes()
 
     def _reorder(self):
         self.train_tasks = [self.train_tasks[i] for i in self.train_task_reordering]
-        self.M_tr_te = self.M_tr_te_original[
+        self.dist_tr_te = self.dist_tr_te[
             np.ix_(self.train_task_reordering, np.arange(self.T_te))
         ]
 
@@ -220,88 +227,143 @@ class MetaKNNGDExperiment:
             [self.train_datasets, self.test_datasets], axis=0
         )
 
-    def _get_ridge_regression_prototype_weights(self):
-        """Get the ridge regression estimates of dataset prototypes"""
+    def calculate_prototypes(self):
+        """Recalculate prototypes using prototype_estimator
 
-        def get_weights(dataset):
-            X, y = dataset[:, :-1], dataset[:, -1:]
-            w_hat = Ridge(alpha=self.ridge_alpha, fit_intercept=False).fit(X, y).coef_
-            return w_hat
-
-        self.prototype_ridge_weights = []
-        for dataset in self.train_datasets:
-            self.prototype_ridge_weights.append(get_weights(dataset))
-        self.prototype_ridge_weights = np.array(self.prototype_ridge_weights).squeeze()
-        assert len(self.prototype_ridge_weights) == self.T_tr
-
-    def calculate_ridge_regression_prototype_weights(self):
-        self._get_ridge_regression_prototype_weights()
+        This allows us to cross-validate after we change the prototype
+        estimator parameters"""
+        self.prototypes = self.prototype_estimator.transform(self.train_tasks)
 
     def _adapt(self, i, t):
         """Adapt to one task with index i when meta-train set is of size t"""
-        # Unpack task
         test_task = self.test_tasks[i]
         X_tr, y_tr = test_task["train"]
-        # Find K nearest tasks using M_tr_te
-        distances = self.M_tr_te[:t, i]
+        distances = self.dist_tr_te[:t, i]
 
-        ridge_weights_of_knn = self.prototype_ridge_weights[
-            np.argsort(distances)[: self.k_nn]
-        ]
-        # Find w_hat running GD
-        w_0 = np.mean(ridge_weights_of_knn, axis=0)
-        w_hat = w_0
-        for _ in range(self.adaptation_steps):
-            w_hat -= self.learning_rate * 2 * X_tr.T @ (X_tr @ w_hat - y_tr)
-        return w_hat
+        knn_prototypes = self.prototypes[np.argsort(distances)[: self.k_nn], :]
+
+        w_0 = np.mean(knn_prototypes, axis=0)
+        self.base_algorithm.fit(X_tr, y_tr, w_0=w_0)
 
     def _loss(self, i, t):
         test_task = self.test_tasks[i]
         X_te, y_te = test_task["test"]
-        w_hat = self._adapt(i, t)
-        y_hat_te = X_te @ w_hat
-        return mean_squared_error(y_te, y_hat_te)
+        self._adapt(i, t)
+        return mean_squared_error(y_te, self.base_algorithm.predict(X_te))
 
     def calculate_transfer_risk(self):
         """Calculate the transfer risk"""
         # The loss matrix is a matrix of size (T_tr, T_te)
         # Note that the first self.k_nn columns are nans selfince
         # we do not fill them in as not eno ugh prototypes are available
-        self.loss_matrix = np.zeros((self.T_tr, self.T_te))
-        self.loss_matrix[: self.k_nn, :] = np.nan
+        self.loss_matrix_ = np.zeros((self.T_tr, self.T_te))
+        self.loss_matrix_[: self.k_nn, :] = np.nan
         # Each t represents using meta-train instances up until t according to
         # ordering as prototypes. We need to start at k_nn to be able to find
         # k_nn neighbours
         for t in range(self.k_nn, self.T_tr):
             for i in range(self.T_te):
-                self.loss_matrix[t, i] = self._loss(i, t)
+                self.loss_matrix_[t, i] = self._loss(i, t)
+
+    def set_base_algorithm_params(self, params):
+        self.base_algorithm.set_params(**params)
+
+    def get_base_algorithm_params(self):
+        return self.base_algorithm.get_params()
+
+    def set_prototype_estimator_params(self, params):
+        self.prototype_estimator.set_params(**params)
+
+    def get_prototype_estimator_params(self):
+        return self.prototype_estimator.get_params()
+
+    def set_params(self, params):
+        # Need to catch estimator having no params
+        self.set_base_algorithm_params(params["base_algorithm"])
+        self.set_prototype_estimator_params(params["prototype_estimator"])
+
+    def get_params(self):
+        return {
+            "base_algorithm": self.get_base_algorithm_params(),
+            "prototype_estimator": self.get_prototype_estimator_params(),
+        }
 
 
-class GDLeastSquares:
+def cross_validate_aml(aml, cv_base_algorithm_params, cv_prototype_estimator_params):
+    """Cross validate aml over cv_params
+
+    aml is an object of class MetaKNNExperiment and cv_base_algorithm_params and
+    cv_prototype_estimator_params are dictionaries of the values for each
+    parameter (base_algorithm and prototype_estimator respectively).
+
+    Note that the params need to be non-empty. If the base_algorithm or
+    prototype_estimator does not take any parameters, pass None as key"""
+    base_algorithm_param_grid = ParameterGrid(cv_base_algorithm_params)
+    prototype_estimator_param_grid = ParameterGrid(cv_prototype_estimator_params)
+    opt_loss = np.inf
+    opt_params = {"base_algorithm": None, "prototype_estimator": None}
+    for base_params in base_algorithm_param_grid:
+        for prototype_params in prototype_estimator_param_grid:
+            logging.info(
+                "Cross validating base / prototype params: {} / {}".format(
+                    base_params, prototype_params
+                )
+            )
+            aml.set_params(
+                {"base_algorithm": base_params, "prototype_estimator": prototype_params}
+            )
+            aml.calculate_prototypes()
+            aml.calculate_transfer_risk()
+            current_loss = np.nanmean(aml.loss_matrix_)
+            logging.info("Current loss: {}".format(current_loss))
+            if current_loss < opt_loss:
+                opt_loss = current_loss
+                opt_params["base_algorithm"] = base_params
+                opt_params["prototype_estimator"] = prototype_params
+                logging.info(
+                    "Best params so far {} / {}, with loss {:.4f}".format(
+                        base_params, prototype_params, opt_loss
+                    )
+                )
+    return opt_params, opt_loss
+
+
+class GDLeastSquares(BaseEstimator, RegressorMixin):
     def __init__(self, learning_rate, adaptation_steps):
         self.learning_rate = learning_rate
         self.adaptation_steps = adaptation_steps
+        self.w_0 = None
 
-    def fit(self, X_tr, y_tr):
-        n, d = X_tr.shape
-        self.w_hat = np.zeros(d)
+    def fit(self, X, y, w_0=None):
+        X, y = check_X_y(X, y)
+        n, d = X.shape
+        if w_0 is None:
+            self.w_hat_ = np.zeros(d)
+        else:
+            self.w_hat_ = w_0
         for _ in range(self.adaptation_steps):
-            self.w_hat -= self.learning_rate * 2 * X_tr.T @ (X_tr @ self.w_hat - y_tr)
-        return self.w_hat
+            self.w_hat_ -= self.learning_rate * 2 * X.T @ (X @ self.w_hat_ - y)
+        return self
 
-    def predict(self, X_te):
-        return X_te @ self.w_hat
+    def predict(self, X):
+        check_is_fitted(self)
+        check_array(X)
+        return X @ self.w_hat_
 
 
-class RidgeRegression:
+class RidgeRegression(BaseEstimator, RegressorMixin):
     def __init__(self, alpha):
         self.alpha = alpha
 
-    def fit(self, X_tr, y_tr):
-        self.w_hat = Ridge(alpha=self.alpha, fit_intercept=False).fit(X_tr, y_tr).coef_
+    def fit(self, X, y):
+        X, y = check_X_y(X, y)
+        self.w_hat_ = Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
+        return self
 
-    def predict(self, X_te):
-        return X_te @ self.w_hat
+    def predict(self, X):
+        check_is_fitted(self)
+        check_array(X)
+        return X @ self.w_hat_
 
 
 class IndependentTaskLearning:
@@ -319,90 +381,59 @@ class IndependentTaskLearning:
         self.algorithm = algorithm
         self.loss = loss
 
-    def _fit(self, task):
+    def fit(self, task):
         """Fit `algorithm` to the i'th task"""
         X_tr, y_tr = task["train"]
-        return self.algorithm.fit(X_tr, y_tr)
+        self.algorithm.fit(X_tr, y_tr)
 
-    def _predict(self, task):
-        X_te, y_te = task["test"]
+    def predict(self, task):
+        X_te, _ = task["test"]
         return self.algorithm.predict(X_te)
 
-    def _loss(self, task):
+    def get_loss(self, task):
         _, y_te = task["test"]
-        self._fit(task)
-        y_pred = self._predict(task)
+        self.fit(task)
+        y_pred = self.predict(task)
         return self.loss(y_pred, y_te)
 
     def calculate_transfer_risk(self):
         # Collect loss for each task in tasks
-        self.losses = []
+        self.losses_ = []
         for task in self.tasks:
-            self.losses.append(self._loss(task))
-        self.losses = np.array(self.losses)
+            self.losses_.append(self.get_loss(task))
+        self.losses_ = np.array(self.losses_)
+
+    def set_params(self, params):
+        """Update paramaters of algorithm"""
+        self.algorithm.set_params(**params)
+
+    def get_params(self):
+        """Update paramaters of algorithm"""
+        return self.algorithm.get_params()
 
 
-def cross_validate(model, alphas, lrs):
+def cross_validate_itl(itl, cv_params):
+    """Cross validate itl over cv_params
+
+    itl is an object of class IndependentTaskLearning
+    and cv_params is a dictionary of the values for each
+    parameter."""
+    param_grid = ParameterGrid(cv_params)
     opt_loss = np.inf
-    for alpha in alphas:
-        for lr in lrs:
-            model.ridge_alpha = alpha
-            model.learning_rate = lr
-            model.calculate_ridge_regression_prototype_weights()
-            model.calculate_transfer_risk()
-            current_loss = np.nanmean(model.loss_matrix)
-            logging.info("Cross validating (alpha, lr): {}".format((alpha, lr)))
-            logging.info("Current loss: {}".format(current_loss))
-            # Keep best hyperparams
-            if current_loss < opt_loss:
-                logging.info(
-                    "Best (alpha, lr) so far {}, with loss {:.4f}".format(
-                        (alpha, lr), current_loss
-                    )
-                )
-                opt_loss = current_loss
-                opt_alpha = alpha
-                opt_lr = lr
-    return opt_alpha, opt_lr, opt_loss
-
-
-# Maybe refactor this in a smarter way
-
-
-def cross_validate_itl_one_step_gd(model, lrs):
-    opt_loss = np.inf
-    for lr in lrs:
-        model.algorithm.learning_rate = lr
-        model.calculate_transfer_risk()
-        current_loss = np.mean(model.losses)
-        logging.info("Cross validating (lr): {}".format(lr))
+    opt_params = None
+    for params in param_grid:
+        logging.info("Cross validating params: {}".format(params))
+        itl.set_params(params)
+        itl.calculate_transfer_risk()
+        current_loss = np.mean(itl.losses_)
         logging.info("Current loss: {}".format(current_loss))
-        # Keep best hyperparams
         if current_loss < opt_loss:
-            logging.info(
-                "Best (lr) so far {}, with loss {:.4f}".format(lr, current_loss)
-            )
             opt_loss = current_loss
-            opt_lr = lr
-    return opt_lr, opt_loss
-
-
-def cross_validate_itl_rr(model, alphas):
-    opt_loss = np.inf
-    for alpha in alphas:
-        model.algorithm.alpha = alpha
-        model.calculate_transfer_risk()
-        current_loss = np.mean(model.losses)
-        logging.info("Cross validating (alpha): {}".format(alpha))
-        logging.info("Current loss: {}".format(current_loss))
-        # Keep best hyperparams
-        if current_loss < opt_loss:
+            opt_params = params
             logging.info(
-                "Best (alpha) so far {}, with loss {:.4f}".format(alpha, current_loss)
+                "Best params so far {}, with loss {:.4f}".format(params, opt_loss)
             )
-            opt_loss = current_loss
-            opt_alpha = alpha
-    return opt_alpha, opt_loss
+    return opt_params, opt_loss
 
 
 def calculate_double_gaussian_median_heuristics(
@@ -416,9 +447,7 @@ def calculate_double_gaussian_median_heuristics(
         pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
     else:
         vec_A = A.reshape(-1, d)
-        subsample_indices = np.random.permutation(vec_A.shape[0])[
-            :median_heuristic_n_subsamples
-        ]
+        subsample_indices = np.random.permutation(vec_A.shape[0])[:n_base_subsamples]
         vec_A = vec_A[subsample_indices]
         pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
     base_s2 = median_heuristic(pairwise_square_dists)
@@ -437,6 +466,91 @@ def calculate_double_gaussian_median_heuristics(
     meta_s2 = median_heuristic(M2, n_meta_subsamples)
 
     return base_s2, meta_s2
+
+
+def run_aml(
+    aml_order,
+    train_batches,
+    val_batches,
+    test_batches,
+    dist_tr_te,
+    dist_tr_val,
+    learning_rates,
+    alphas,
+):
+    """Run AML experiment"""
+    data = {"ridge": {}, "weights": {}}
+    one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
+
+    #
+    # Prototypes: ridge regression
+    #
+    model = MetaKNNExperiment(
+        train_batches,
+        val_batches,
+        dist_tr_val,
+        one_step_gd,
+        k_nn,
+        aml_order,
+        RidgeRegPrototypeEstimator(alpha=0.1),
+    )
+    logging.info("Cross validating AML: RidgeReg")
+    opt_params, opt_loss = cross_validate_aml(
+        model, {"learning_rate": learning_rates}, {"alpha": alphas}
+    )
+    logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
+    # Reset model with optimal parameters
+    model = MetaKNNExperiment(
+        train_batches,
+        test_batches,
+        dist_tr_te,
+        one_step_gd,
+        k_nn,
+        aml_order,
+        RidgeRegPrototypeEstimator(alpha=0.1),
+    )
+    model.set_params(opt_params)
+    model.calculate_prototypes()
+    model.calculate_transfer_risk()
+    logging.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
+    data["ridge"] = {"optimal_parameters": opt_params, "test_error": model.loss_matrix_}
+
+    #
+    # Prototypes: true weights
+    #
+    model = MetaKNNExperiment(
+        train_batches,
+        val_batches,
+        M_tr_val,
+        one_step_gd,
+        k_nn,
+        aml_order,
+        TrueWeightPrototypeEstimator(),
+    )
+    logging.info("Cross validating AML: TrueWeights")
+    opt_params, opt_loss = cross_validate_aml(
+        model, {"learning_rate": learning_rates}, {}
+    )
+    logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
+    # Reset model with optimal parameters
+    model = MetaKNNExperiment(
+        train_batches,
+        test_batches,
+        dist_tr_te,
+        one_step_gd,
+        k_nn,
+        aml_order,
+        TrueWeightPrototypeEstimator(),
+    )
+    model.set_params(opt_params)
+    model.calculate_prototypes()
+    model.calculate_transfer_risk()
+    logging.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
+    data["weights"] = {
+        "optimal_parameters": opt_params,
+        "test_error": model.loss_matrix_,
+    }
+    return data
 
 
 if __name__ == "__main__":
@@ -468,14 +582,30 @@ if __name__ == "__main__":
     k_nn = param_dict["k_nn"]
     env_name = param_dict["env_name"]
 
-    k_shot = 10
-    k_query = 15
-    median_heuristic_n_subsamples = 300
-    meta_train_batches = 400
+    # Experiment data
+    # A dictionary that holds the data related to the
+    # experiment. This is a dictionary which looks as follows
+    # Level 1:
+    # experiment_data.keys() == ("aml", "itl")
+    # Level 2:
+    # experiment_data["aml"].keys() == ("data", "weights", "uniform")
+    # experiment_data["itl"].keys() == ("ridge", "one_step_gd")
+    # Level 3:
+    # experiment_data["itl"][{"ridge", "one_step_gd"}].keys() == ("optimal_parameters", "test_error")
+    # experiment_data["aml"][{"data", "weights", "uniform"}].keys() == ("ridge", "weights")
+    # Level 4
+    # experiment_data["aml"][{"data", "weights", "uniform"}][{"ridge", "weights"}].keys() == ("optimal_parameters", "test_error")
+
+    experiment_data = {"aml": {}, "itl": {}}
+
+    k_shot = 10  # 10
+    k_query = 15  # 15
+    median_heuristic_n_subsamples = 50  # 300
+    num_meta_train_batches = 50  # 400
     meta_train_batch_size = 1  # Hardcoded
-    meta_val_batches = 500
+    num_meta_val_batches = 100  # 500
     meta_val_batch_size = 1  # Hardcoded
-    meta_test_batches = 500
+    num_meta_test_batches = 100  # 500
     meta_test_batch_size = 1  # Hardcoded
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
     param_dict["env_attributes"] = vars(env)
@@ -488,7 +618,9 @@ if __name__ == "__main__":
         collate_fn=train_dataset.collate_fn,
         batch_size=meta_train_batch_size,
     )
-    train_batches = aggregate_sampled_task_batches(train_dataloader, meta_train_batches)
+    train_batches = aggregate_sampled_task_batches(
+        train_dataloader, num_meta_train_batches
+    )
     train_batches_kh = convert_batches_to_fw_form(train_batches)
     train_batches = npfy_batches(train_batches)
     train_task_ws = get_task_parameters(train_batches)
@@ -500,7 +632,7 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(
         val_dataset, collate_fn=val_dataset.collate_fn, batch_size=meta_val_batch_size
     )
-    val_batches = aggregate_sampled_task_batches(val_dataloader, meta_val_batches)
+    val_batches = aggregate_sampled_task_batches(val_dataloader, num_meta_val_batches)
     val_batches_kh = convert_batches_to_fw_form(val_batches)
     val_batches = npfy_batches(val_batches)
     val_task_ws = get_task_parameters(val_batches)
@@ -514,225 +646,176 @@ if __name__ == "__main__":
         collate_fn=test_dataset.collate_fn,
         batch_size=meta_test_batch_size,
     )
-    test_batches = aggregate_sampled_task_batches(test_dataloader, meta_test_batches)
+    test_batches = aggregate_sampled_task_batches(
+        test_dataloader, num_meta_test_batches
+    )
     test_batches_kh = convert_batches_to_fw_form(test_batches)
     test_batches = npfy_batches(test_batches)
     test_task_ws = get_task_parameters(test_batches)
     logging.info("Done")
 
-    # Calculate base_s2 and meta_s2 from train set
     train_datasets = form_datasets_from_tasks(train_batches)
     val_datasets = form_datasets_from_tasks(val_batches)
     test_datasets = form_datasets_from_tasks(test_batches)
+
+    logging.info("Calculating sigmas for data MMD")
+    # Calculate base_s2 and meta_s2 from train set
     base_s2_D, meta_s2_D = calculate_double_gaussian_median_heuristics(
         train_datasets, n_base_subsamples=median_heuristic_n_subsamples
     )
+    logging.info("Done")
 
+    logging.info("Building MMD matrices for tr, val, test")
     M_tr_val = np.sqrt(_mmd2_matrix(train_datasets, val_datasets, base_s2_D))
     M_tr_te = np.sqrt(_mmd2_matrix(train_datasets, test_datasets, base_s2_D))
+    logging.info("Done")
 
-    logging.info("Generating prototypes for:")
-    dataset_indices = dict()
-    # Sample k from meta-train using
-    # Uniform
-    logging.info("Uniform")
-    dataset_indices["uniform"] = np.arange(meta_train_batches)
-    logging.info("Done")
-    # KH weights
-    logging.info("KH weights")
-    s2_w = median_heuristic(squareform(pdist(train_task_ws, "sqeuclidean")))
-    K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
-    kh_w = KernelHerding(K_w)
-    kh_w.run()
-    dataset_indices["kh_weights"] = kh_w.sampled_order
-    logging.info("Done")
-    # KH data
-    logging.info("KH Data")
+    logging.info("Generating learning curves")
+
+    # Base algorithm
+    one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
+    rr = RidgeRegression(alpha=None)
+    # Parameter grids
+    learning_rates = np.geomspace(1e-4, 1e0, 3)
+    alphas = np.geomspace(1e-4, 1e4, 5)
+
+    experiment_data["aml"] = {}
+    ###
+    ### Baseline: Uniform sampling
+    ###
+    logging.info("AML: uniform")
+    experiment_data["aml"]["uniform"] = {}
+    logging.info("Getting optimal parameter and test error")
+    aml_order = np.arange(num_meta_train_batches)
+    data = run_aml(
+        aml_order,
+        train_batches,
+        val_batches,
+        test_batches,
+        M_tr_te,
+        M_tr_val,
+        learning_rates,
+        alphas,
+    )
+    experiment_data["aml"]["uniform"] = data
+
+    ###
+    ### AML: KH on data
+    ###
+    logging.info("AML: KH data")
+    experiment_data["aml"]["data"] = {}
+    logging.info("Generating active train order")
     K_D = _gaussian_kernel_mmd2_matrix(
         train_datasets, train_datasets, base_s2_D, meta_s2_D
     )
     kh_D = KernelHerding(K_D)
     kh_D.run()
-    dataset_indices["kh_data"] = kh_D.sampled_order
     logging.info("Done")
+    logging.info("Getting optimal parameter and test error")
+    aml_order = kh_D.sampled_order
+    data = run_aml(
+        aml_order,
+        train_batches,
+        val_batches,
+        test_batches,
+        M_tr_te,
+        M_tr_val,
+        learning_rates,
+        alphas,
+    )
+    experiment_data["aml"]["data"] = data
 
-    # Will cross validate anyway
-    # Better to fail if it doesn't work
-    ridge_alpha = None
-    learning_rate = None
-    logging.info("Defining models")
-    model_u = MetaKNNGDExperiment(
-        train_batches,
-        val_batches,
-        M_tr_val,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=ridge_alpha,
-        learning_rate=learning_rate,
-        train_task_reordering=dataset_indices["uniform"],
-    )
-    model_kh_w = MetaKNNGDExperiment(
-        train_batches,
-        val_batches,
-        M_tr_val,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=ridge_alpha,
-        learning_rate=learning_rate,
-        train_task_reordering=dataset_indices["kh_weights"],
-    )
-    model_kh_D = MetaKNNGDExperiment(
-        train_batches,
-        val_batches,
-        M_tr_val,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=ridge_alpha,
-        learning_rate=learning_rate,
-        train_task_reordering=dataset_indices["kh_data"],
-    )
+    ###
+    ### AML: KH on weights
+    ###
+    logging.info("AML: KH weights")
+    experiment_data["aml"]["weights"] = {}
+    logging.info("Generating active train order")
+    s2_w = median_heuristic(squareform(pdist(train_task_ws, "sqeuclidean")))
+    K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
+    kh_w = KernelHerding(K_w)
+    kh_w.run()
     logging.info("Done")
-    logging.info("Cross validation against learning rate")
-    # Hyperparams
-    lrs = np.geomspace(1e-4, 1e0, 3)
-    alphas = np.geomspace(1e-4, 1e4, 5)
-    logging.info("Uniform")
-    alpha_u, lr_u, u_cross_val_loss = cross_validate(model_u, alphas, lrs)
-    logging.info("KH weights")
-    alpha_kh_w, lr_kh_w, kh_w_cross_val_loss = cross_validate(model_kh_w, alphas, lrs)
-    logging.info("KH data")
-    alpha_kh_D, lr_kh_D, kh_D_cross_val_loss = cross_validate(model_kh_D, alphas, lrs)
-    logging.info("Optimal learning rates and losses found:")
-    logging.info(
-        "U: alpha={}, lr={}, loss={:.4f}".format(alpha_u, lr_u, u_cross_val_loss)
+    logging.info("Getting optimal parameter and test error")
+    aml_order = kh_w.sampled_order
+    data = run_aml(
+        aml_order,
+        train_batches,
+        val_batches,
+        test_batches,
+        M_tr_te,
+        M_tr_val,
+        learning_rates,
+        alphas,
     )
-    logging.info(
-        "KH_W: alpha={}, lr={}, loss={:.4f}".format(
-            alpha_kh_w, lr_kh_w, kh_w_cross_val_loss
-        )
-    )
-    logging.info(
-        "KH_D: alpha={}, lr={}, loss={:.4f}".format(
-            alpha_kh_D, lr_kh_D, kh_D_cross_val_loss
-        )
-    )
-    # Optimising for ITL
-    logging.info("Cross validation for ITL")
-    logging.info("One-step GD")
-    one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
-    itl_one_step_gd = IndependentTaskLearning(val_batches, one_step_gd)
-    lr_itl_one_step_gd, itl_one_step_gd_cross_val_loss = cross_validate_itl_one_step_gd(
-        itl_one_step_gd, lrs
+    experiment_data["aml"]["weights"] = data
+
+    ###
+    ### ITL
+    ###
+
+    logging.info("ITL")
+    experiment_data["itl"] = {}
+    #
+    # Ridge regression
+    #
+    logging.info("Ridge Reg")
+    logging.info("Cross Validating")
+    rr = RidgeRegression(alpha=None)
+    itl_rr = IndependentTaskLearning(val_batches, rr)
+    itl_rr_opt_params, itl_rr_cross_val_loss = cross_validate_itl(
+        itl_rr, {"alpha": alphas.tolist()}
     )
     logging.info("Optimal learning rate and loss found:")
     logging.info(
-        "lr={}, loss={:.4f}".format(lr_itl_one_step_gd, itl_one_step_gd_cross_val_loss)
+        "alpha={}, loss={:.4f}".format(
+            itl_rr_opt_params["alpha"], itl_rr_cross_val_loss
+        )
     )
-    itl_one_step_gd.algorithm.learning_rate = lr_itl_one_step_gd
+    itl_rr.set_params(itl_rr_opt_params)
 
-    logging.info("Ridge Reg")
-    rr = RidgeRegression(alpha=None)
-    itl_rr = IndependentTaskLearning(val_batches, rr)
-    alpha_itl_rr, itl_rr_cross_val_loss = cross_validate_itl_rr(itl_rr, alphas)
-    logging.info("Optimal alpha and loss found:")
-    logging.info("alpha={}, loss={:.4f}".format(alpha_itl_rr, itl_rr_cross_val_loss))
-    itl_rr.algorithm.alpha = alpha_itl_rr
-
-    # Set optimal hyperparameters
-    experiment_data = dict()
-    experiment_data["uniform"] = {
-        "optimal_parameters": {"ridge_alpha": alpha_u, "learning_rate": lr_u}
-    }
-    experiment_data["kh_weights"] = {
-        "optimal_parameters": {"ridge_alpha": alpha_kh_w, "learning_rate": lr_kh_w}
-    }
-    experiment_data["kh_data"] = {
-        "optimal_parameters": {"ridge_alpha": alpha_kh_D, "learning_rate": lr_kh_D}
-    }
-    experiment_data["itl"] = {
-        "ridge": {
-            "optimal_parameters": {
-                "ridge_alpha": None,
-                "learning_rate": lr_itl_one_step_gd,
-            }
-        },
-        "one_step_gd": {
-            "optimal_parameters": {"ridge_alpha": alpha_itl_rr, "learning_rate": None}
-        },
-    }
-
-    logging.info("Getting learning curves for meta test error")
-    meta_test_error = dict()
-    model_u = MetaKNNGDExperiment(
-        train_batches,
-        test_batches,
-        M_tr_te,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=alpha_u,
-        learning_rate=lr_u,
-        train_task_reordering=dataset_indices["uniform"],
-    )
-    model_kh_w = MetaKNNGDExperiment(
-        train_batches,
-        test_batches,
-        M_tr_te,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=alpha_kh_w,
-        learning_rate=lr_kh_w,
-        train_task_reordering=dataset_indices["kh_weights"],
-    )
-    model_kh_D = MetaKNNGDExperiment(
-        train_batches,
-        test_batches,
-        M_tr_te,
-        k_nn,
-        adaptation_steps=1,
-        ridge_alpha=alpha_kh_D,
-        learning_rate=lr_kh_D,
-        train_task_reordering=dataset_indices["kh_data"],
-    )
-
-    logging.info("Uniform")
-    model_u.calculate_ridge_regression_prototype_weights()
-    model_u.calculate_transfer_risk()
-    meta_test_error["uniform"] = model_u.loss_matrix
-    logging.info("KH weights")
-    model_kh_w.calculate_ridge_regression_prototype_weights()
-    model_kh_w.calculate_transfer_risk()
-    meta_test_error["kh_weights"] = model_kh_w.loss_matrix
-    logging.info("KH data")
-    model_kh_D.calculate_ridge_regression_prototype_weights()
-    model_kh_D.calculate_transfer_risk()
-    meta_test_error["kh_data"] = model_kh_D.loss_matrix
-    logging.info("ITL")
-    logging.info("Ridge")
+    logging.info("Calculating meta-test error")
     itl_rr.tasks = test_batches
     itl_rr.calculate_transfer_risk()
-    logging.info("One-step GD")
-    itl_one_step_gd.tasks = test_batches
-    itl_one_step_gd.calculate_transfer_risk()
-    meta_test_error["itl"] = {
-        "ridge": itl_rr.losses,
-        "one_step_gd": itl_one_step_gd.losses,
-    }
 
+    experiment_data["itl"]["ridge"] = {
+        "optimal_parameters": itl_rr_opt_params,
+        "test_error": itl_rr.losses_,
+    }
     logging.info("Done")
 
-    experiment_data["uniform"]["test_error"] = meta_test_error["uniform"]
-    experiment_data["kh_weights"]["test_error"] = meta_test_error["kh_weights"]
-    experiment_data["kh_data"]["test_error"] = meta_test_error["kh_data"]
-    experiment_data["itl"]["ridge"] = {"test_error": meta_test_error["itl"]["ridge"]}
+    #
+    # One step gd
+    #
+    logging.info("One-step GD")
+    itl_one_step_gd = IndependentTaskLearning(val_batches, one_step_gd)
+    itl_one_step_gd_opt_params, itl_one_step_gd_cross_val_loss = cross_validate_itl(
+        itl_one_step_gd,
+        {"learning_rate": learning_rates.tolist(), "adaptation_steps": [1]},
+    )
+    logging.info("Optimal learning rate and loss found:")
+    logging.info(
+        "lr={}, loss={:.4f}".format(
+            itl_one_step_gd_opt_params["learning_rate"], itl_one_step_gd_cross_val_loss
+        )
+    )
+    itl_one_step_gd.set_params(itl_one_step_gd_opt_params)
+
+    logging.info("Calculating meta-test error")
+    itl_one_step_gd.tasks = test_batches
+    itl_one_step_gd.calculate_transfer_risk()
+
     experiment_data["itl"]["one_step_gd"] = {
-        "test_error": meta_test_error["itl"]["one_step_gd"]
+        "optimal_parameters": itl_one_step_gd_opt_params,
+        "test_error": itl_one_step_gd.losses_,
     }
+    logging.info("Done")
 
     # Dump data
+    logging.info("Dumping parameters and experiment_data")
     # Params
     hkl.dump(param_dict, args.output_dir / "parameters.hkl")
     # Experiment data
     hkl.dump(experiment_data, args.output_dir / "experiment_data.hkl")
 
-    logging.info("Done")
     logging.info("Good bye!")
