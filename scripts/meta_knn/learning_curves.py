@@ -159,7 +159,6 @@ class RidgeRegPrototypeEstimator:
 
     def _get_weights(self, dataset):
         X, y = dataset[:, :-1], dataset[:, -1:]
-        check_X_y(X, y)
         return Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
 
     def set_params(self, **params):
@@ -335,7 +334,6 @@ class GDLeastSquares(BaseEstimator, RegressorMixin):
         self.w_0 = None
 
     def fit(self, X, y, w_0=None):
-        X, y = check_X_y(X, y)
         n, d = X.shape
         if w_0 is None:
             self.w_hat_ = np.zeros(d)
@@ -346,8 +344,6 @@ class GDLeastSquares(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, X):
-        check_is_fitted(self)
-        check_array(X)
         return X @ self.w_hat_
 
 
@@ -356,13 +352,10 @@ class RidgeRegression(BaseEstimator, RegressorMixin):
         self.alpha = alpha
 
     def fit(self, X, y):
-        X, y = check_X_y(X, y)
         self.w_hat_ = Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
         return self
 
     def predict(self, X):
-        check_is_fitted(self)
-        check_array(X)
         return X @ self.w_hat_
 
 
