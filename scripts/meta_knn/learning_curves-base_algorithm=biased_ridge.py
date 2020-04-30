@@ -702,14 +702,7 @@ if __name__ == "__main__":
     logging.info("Getting optimal parameter and test error")
     aml_order = np.arange(num_meta_train_batches)
     data = run_aml(
-        aml_order,
-        train_batches,
-        val_batches,
-        test_batches,
-        M_tr_te,
-        M_tr_val,
-        learning_rates,
-        alphas,
+        aml_order, train_batches, val_batches, test_batches, M_tr_te, M_tr_val, alphas,
     )
     experiment_data["aml"]["uniform"] = data
 
@@ -728,14 +721,7 @@ if __name__ == "__main__":
     logging.info("Getting optimal parameter and test error")
     aml_order = kh_D.sampled_order
     data = run_aml(
-        aml_order,
-        train_batches,
-        val_batches,
-        test_batches,
-        M_tr_te,
-        M_tr_val,
-        learning_rates,
-        alphas,
+        aml_order, train_batches, val_batches, test_batches, M_tr_te, M_tr_val, alphas,
     )
     experiment_data["aml"]["data"] = data
 
@@ -753,14 +739,7 @@ if __name__ == "__main__":
     logging.info("Getting optimal parameter and test error")
     aml_order = kh_w.sampled_order
     data = run_aml(
-        aml_order,
-        train_batches,
-        val_batches,
-        test_batches,
-        M_tr_te,
-        M_tr_val,
-        learning_rates,
-        alphas,
+        aml_order, train_batches, val_batches, test_batches, M_tr_te, M_tr_val, alphas,
     )
     experiment_data["aml"]["weights"] = data
 
