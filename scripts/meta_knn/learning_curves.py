@@ -598,14 +598,14 @@ if __name__ == "__main__":
 
     experiment_data = {"aml": {}, "itl": {}}
 
-    k_shot = 10  # 10
-    k_query = 15  # 15
-    median_heuristic_n_subsamples = 50  # 300
-    num_meta_train_batches = 50  # 400
+    k_shot = 10
+    k_query = 15
+    median_heuristic_n_subsamples = 300
+    num_meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
-    num_meta_val_batches = 100  # 500
+    num_meta_val_batches = 500
     meta_val_batch_size = 1  # Hardcoded
-    num_meta_test_batches = 100  # 500
+    num_meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
     param_dict["env_attributes"] = vars(env)
