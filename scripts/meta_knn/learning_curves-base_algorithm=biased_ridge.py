@@ -367,14 +367,14 @@ class BiasedRidgeRegression(BaseEstimator, RegressorMixin):
     # Note: to stay consistent with RidgeRegPrototypeEstimator
     # and GDLeastSquares which does *not* take n into account, we
     # use \alpha = n\lambda as regulariser
-    def __init__(self, alpha, bias):
+    def __init__(self, alpha):
         self.alpha = alpha
 
-    def fit(self, X, y, bias):
+    def fit(self, X, y, w_0):
         n, d = X.shape
-        assert d == self.bias.shape[0]
+        assert d == w_0.shape[0]
         a = X.T @ X + self.alpha * np.eye(d)
-        b = X.T @ y + self.alpha * np.eye(d)
+        b = X.T @ y + self.alpha * w_0
         self.w_hat_ = solve(a, b, assume_a="pos")
         return self
 
@@ -543,7 +543,7 @@ def run_aml(
         TrueWeightPrototypeEstimator(),
     )
     logging.info("Cross validating AML: TrueWeights")
-    opt_params, opt_loss = cross_validate_aml(model, {"alphas": alphas}, {})
+    opt_params, opt_loss = cross_validate_aml(model, {"alpha": alphas}, {})
     logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
     # Reset model with optimal parameters
     model = MetaKNNExperiment(
