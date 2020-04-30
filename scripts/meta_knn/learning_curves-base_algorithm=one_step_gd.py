@@ -132,13 +132,17 @@ def _gaussian_kernel_mmd2_matrix(A, B, base_s2, meta_s2):
     return np.exp(-0.5 * M2 / meta_s2)
 
 
-def form_datasets_from_tasks(tasks):
+def form_datasets_from_tasks(tasks, use_only_train=False):
     datasets = []
     for task in tasks:
         X_tr, y_tr = task["train"]
         X_te, y_te = task["test"]
-        X = np.concatenate((X_tr, X_te), axis=0)
-        y = np.concatenate((y_tr, y_te), axis=0)
+        if use_only_train:
+            X = X_tr
+            y = y_tr
+        else:
+            X = np.concatenate((X_tr, X_te), axis=0)
+            y = np.concatenate((y_tr, y_te), axis=0)
         D = np.concatenate((X, y.reshape(-1, 1)), axis=1)
         datasets.append(D)
     # adds new axis
@@ -331,7 +335,6 @@ class GDLeastSquares(BaseEstimator, RegressorMixin):
     def __init__(self, learning_rate, adaptation_steps):
         self.learning_rate = learning_rate
         self.adaptation_steps = adaptation_steps
-        self.w_0 = None
 
     def fit(self, X, y, w_0=None):
         n, d = X.shape
@@ -648,8 +651,9 @@ if __name__ == "__main__":
     logging.info("Done")
 
     train_datasets = form_datasets_from_tasks(train_batches)
-    val_datasets = form_datasets_from_tasks(val_batches)
-    test_datasets = form_datasets_from_tasks(test_batches)
+    # Don't cheat, can only use support/train set for meta-test and meta-val
+    tr_val_datasets = form_datasets_from_tasks(val_batches, use_only_train=True)
+    tr_test_datasets = form_datasets_from_tasks(test_batches, use_only_train=True)
 
     logging.info("Calculating sigmas for data MMD")
     # Calculate base_s2 and meta_s2 from train set
@@ -659,8 +663,8 @@ if __name__ == "__main__":
     logging.info("Done")
 
     logging.info("Building MMD matrices for tr, val, test")
-    M_tr_val = np.sqrt(_mmd2_matrix(train_datasets, val_datasets, base_s2_D))
-    M_tr_te = np.sqrt(_mmd2_matrix(train_datasets, test_datasets, base_s2_D))
+    M_tr_val = np.sqrt(_mmd2_matrix(train_datasets, tr_val_datasets, base_s2_D))
+    M_tr_te = np.sqrt(_mmd2_matrix(train_datasets, tr_test_datasets, base_s2_D))
     logging.info("Done")
 
     logging.info("Generating learning curves")
