@@ -10,8 +10,6 @@ import pandas as pd
 import seaborn as sns
 import torch as th
 from scipy.spatial.distance import pdist, squareform
-from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import ParameterGrid
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
@@ -29,6 +27,8 @@ from active_meta_learning.data_utils import (
     remove_batched_dimension_in_D,
     reorder_list,
     set_random_seeds,
+    form_datasets_from_tasks,
+    npfy_batches,
 )
 from active_meta_learning.kernels import (
     gaussian_kernel_matrix,
@@ -37,6 +37,13 @@ from active_meta_learning.kernels import (
     mmd2,
 )
 from active_meta_learning.optimisation import KernelHerding
+from active_meta_learning.estimators import (
+    RidgeRegression,
+    BiasedRidgeRegression,
+    RidgeRegPrototypeEstimator,
+    TrueWeightPrototypeEstimator,
+    GDLeastSquares,
+)
 from active_meta_learning.project_parameters import SCRIPTS_DIR, SETTINGS_DATA_DIR
 from hpc_cluster.utils import extract_csv_to_dict
 
@@ -44,32 +51,6 @@ logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(mes
 import warnings
 
 warnings.filterwarnings("ignore")
-
-
-def stringify_parameter_dictionary(d, joiner="-"):
-    l = []
-    for key, val in d.items():
-        if type(val) == float:
-            l.append("{!s}={:.4f}".format(key, val))
-        elif type(val) == int:
-            l.append("{!s}={}".format(key, val))
-        else:
-            l.append("{!s}={}".format(key, val))
-    return joiner.join(l)
-
-
-def create_environment_dataloader(k_shot, k_query, env, noise_w, noise_y, batch_size):
-    # Create dataset and dataloader
-    env_dataset = EnvironmentDataSet(
-        k_shot, k_query, env, noise_w=noise_w, noise_y=noise_y
-    )
-    dataloader = DataLoader(
-        env_dataset,
-        batch_size=batch_size,
-        num_workers=0,
-        collate_fn=env_dataset.collate_fn,
-    )
-    return dataloader
 
 
 def sample_tasks(dataloader, N):
@@ -88,23 +69,6 @@ def unpack_batch(batch, t):
     train_input, train_target = map(lambda x: x[t], batch["train"])
     test_input, test_target = map(lambda x: x[t], batch["test"])
     return train_input, train_target, test_input, test_target
-
-
-def npfy_batches(batches):
-    new_batches = []
-    for batch in batches:
-        new_dict = {}
-        new_dict["train"] = (
-            batch["train"][0].numpy().squeeze(),
-            batch["train"][1].numpy().squeeze(),
-        )
-        new_dict["test"] = (
-            batch["test"][0].numpy().squeeze(),
-            batch["test"][1].numpy().squeeze(),
-        )
-        new_dict["w"] = batch["w"].squeeze()
-        new_batches.append(new_dict)
-    return new_batches
 
 
 def _mmd2_matrix(A, B, base_s2):
@@ -130,61 +94,6 @@ def _gaussian_kernel_mmd2_matrix(A, B, base_s2, meta_s2):
     """
     M2 = _mmd2_matrix(A, B, base_s2)
     return np.exp(-0.5 * M2 / meta_s2)
-
-
-def form_datasets_from_tasks(tasks, use_only_train=False):
-    datasets = []
-    for task in tasks:
-        X_tr, y_tr = task["train"]
-        X_te, y_te = task["test"]
-        if use_only_train:
-            X = X_tr
-            y = y_tr
-        else:
-            X = np.concatenate((X_tr, X_te), axis=0)
-            y = np.concatenate((y_tr, y_te), axis=0)
-        D = np.concatenate((X, y.reshape(-1, 1)), axis=1)
-        datasets.append(D)
-    # adds new axis
-    datasets = np.stack(datasets, axis=0)
-    return datasets
-
-
-class RidgeRegPrototypeEstimator:
-    def __init__(self, alpha):
-        self.alpha = alpha
-
-    def transform(self, tasks):
-        datasets = form_datasets_from_tasks(tasks)
-        weights = np.array(
-            [self._get_weights(dataset).squeeze() for dataset in datasets]
-        )
-        return weights
-
-    def _get_weights(self, dataset):
-        X, y = dataset[:, :-1], dataset[:, -1:]
-        return Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
-
-    def set_params(self, **params):
-        self.alpha = params["alpha"]
-
-    def get_params(self):
-        return {"alpha": self.alpha}
-
-
-class TrueWeightPrototypeEstimator:
-    def __init__(self):
-        pass
-
-    def transform(self, tasks):
-        weights = np.array([task["w"].squeeze() for task in tasks])
-        return weights
-
-    def set_params(self, **params):
-        pass
-
-    def get_params(self):
-        return {}
 
 
 class MetaKNNExperiment:
@@ -331,37 +240,6 @@ def cross_validate_aml(aml, cv_base_algorithm_params, cv_prototype_estimator_par
     return opt_params, opt_loss
 
 
-class GDLeastSquares(BaseEstimator, RegressorMixin):
-    def __init__(self, learning_rate, adaptation_steps):
-        self.learning_rate = learning_rate
-        self.adaptation_steps = adaptation_steps
-
-    def fit(self, X, y, w_0=None):
-        n, d = X.shape
-        if w_0 is None:
-            self.w_hat_ = np.zeros(d)
-        else:
-            self.w_hat_ = w_0
-        for _ in range(self.adaptation_steps):
-            self.w_hat_ -= self.learning_rate * 2 * X.T @ (X @ self.w_hat_ - y)
-        return self
-
-    def predict(self, X):
-        return X @ self.w_hat_
-
-
-class RidgeRegression(BaseEstimator, RegressorMixin):
-    def __init__(self, alpha):
-        self.alpha = alpha
-
-    def fit(self, X, y):
-        self.w_hat_ = Ridge(alpha=self.alpha, fit_intercept=False).fit(X, y).coef_
-        return self
-
-    def predict(self, X):
-        return X @ self.w_hat_
-
-
 class IndependentTaskLearning:
     def __init__(self, tasks, algorithm, loss=mean_squared_error):
         """
@@ -496,6 +374,7 @@ def run_aml(
     )
     logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
     # Reset model with optimal parameters
+    # and tr-te
     model = MetaKNNExperiment(
         train_batches,
         test_batches,
@@ -517,7 +396,7 @@ def run_aml(
     model = MetaKNNExperiment(
         train_batches,
         val_batches,
-        M_tr_val,
+        dist_tr_val,
         one_step_gd,
         k_nn,
         aml_order,
@@ -529,6 +408,7 @@ def run_aml(
     )
     logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
     # Reset model with optimal parameters
+    # and tr-te
     model = MetaKNNExperiment(
         train_batches,
         test_batches,
@@ -562,6 +442,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_dir", type=str,
     )
+    parser.add_argument(
+        "--plot", action="store_true",
+    )
 
     logging.info("Reading args")
     args = parser.parse_args()
@@ -594,8 +477,12 @@ if __name__ == "__main__":
 
     experiment_data = {"aml": {}, "itl": {}}
 
-    k_shot = 10
-    k_query = 15
+    env = hkl.load(SETTINGS_DATA_DIR / env_name)
+    d = env.d
+    param_dict["env_attributes"] = vars(env)
+
+    k_shot = 0.2 * d
+    k_query = 0.2 * d
     median_heuristic_n_subsamples = 300
     num_meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
@@ -603,8 +490,6 @@ if __name__ == "__main__":
     meta_val_batch_size = 1  # Hardcoded
     num_meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
-    env = hkl.load(SETTINGS_DATA_DIR / env_name)
-    param_dict["env_attributes"] = vars(env)
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
@@ -673,8 +558,8 @@ if __name__ == "__main__":
     one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
     rr = RidgeRegression(alpha=None)
     # Parameter grids
-    learning_rates = np.geomspace(1e-4, 1e0, 3)
-    alphas = np.geomspace(1e-4, 1e4, 5)
+    learning_rates = np.geomspace(1e-6, 1e0, 3)
+    alphas = np.geomspace(1e-8, 1e6, 5)
 
     experiment_data["aml"] = {}
     ###
@@ -814,5 +699,160 @@ if __name__ == "__main__":
     hkl.dump(param_dict, args.output_dir / "parameters.hkl")
     # Experiment data
     hkl.dump(experiment_data, args.output_dir / "experiment_data.hkl")
+
+    if args.plot:
+        import json
+
+        def plot_aml_ci(ax, error, color, label, until_t):
+            mean = error.mean(axis=1)
+            std = np.std(error, axis=1)
+            ax.plot(mean[:until_t], label=label, color=color)
+            upper_ci = mean + std
+            lower_ci = mean - std
+            ax.fill_between(
+                np.arange(until_t),
+                lower_ci[:until_t],
+                upper_ci[:until_t],
+                color=color,
+                alpha=0.2,
+            )
+
+        def plot_itl_ci(ax, error, color, label, until_t):
+            mean = np.mean(error)
+            std = np.std(error)
+            ax.axhline(mean, label=label, color=color, linestyle="--")
+            upper_ci = mean + std
+            lower_ci = mean - std
+            ax.fill_between(
+                np.arange(until_t), lower_ci, upper_ci, color=color, alpha=0.2
+            )
+
+        def plot_mean_and_ci(experiment_data, until_t, plot_itl=True):
+            itl_error = experiment_data["itl"]
+            data_error = experiment_data["aml"]["data"]
+            weights_error = experiment_data["aml"]["weights"]
+            uniform_error = experiment_data["aml"]["uniform"]
+
+            # cmap: {"kh_data": red, "kh_weights": yellow, "uniform": blue, "itl_ridge": black, "itl_one_step_gd":gray}
+            fig, ax = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=True)
+
+            # prototype: ridge
+            ax[0].set_title("prototype: ridge estimates")
+            plot_aml_ci(
+                ax[0],
+                data_error["ridge"]["test_error"],
+                color="red",
+                label="ordering: kh on data",
+                until_t=until_t,
+            )
+            plot_aml_ci(
+                ax[0],
+                weights_error["ridge"]["test_error"],
+                color="orange",
+                label="ordering: kh on task weights",
+                until_t=until_t,
+            )
+            plot_aml_ci(
+                ax[0],
+                uniform_error["ridge"]["test_error"],
+                color="blue",
+                label="ordering: random",
+                until_t=until_t,
+            )
+            if plot_itl is True:
+                plot_itl_ci(
+                    ax[0],
+                    itl_error["ridge"]["test_error"],
+                    color="black",
+                    label="itl ridge",
+                    until_t=until_t,
+                )
+                plot_itl_ci(
+                    ax[0],
+                    itl_error["one_step_gd"]["test_error"],
+                    color="gray",
+                    label="itl 1-step gd",
+                    until_t=until_t,
+                )
+            elif plot_itl == "ridge":
+                plot_itl_ci(
+                    ax[0],
+                    itl_error["ridge"]["test_error"],
+                    color="black",
+                    label="itl ridge",
+                    until_t=until_t,
+                )
+            elif plot_itl == "gd":
+                plot_itl_ci(
+                    ax[0],
+                    itl_error["one_step_gd"]["test_error"],
+                    color="gray",
+                    label="itl 1-step gd",
+                    until_t=until_t,
+                )
+
+            ax[0].set_ylabel("mse")
+            ax[0].legend()
+
+            # prototype: true weights
+            ax[1].set_title("prototype: true weights")
+            plot_aml_ci(
+                ax[1],
+                weights_error["weights"]["test_error"],
+                color="orange",
+                label="ordering: kh on task weights",
+                until_t=until_t,
+            )
+            plot_aml_ci(
+                ax[1],
+                uniform_error["weights"]["test_error"],
+                color="blue",
+                label="ordering: random",
+                until_t=until_t,
+            )
+            if plot_itl is True:
+                plot_itl_ci(
+                    ax[1],
+                    itl_error["ridge"]["test_error"],
+                    color="black",
+                    label="itl ridge",
+                    until_t=until_t,
+                )
+                plot_itl_ci(
+                    ax[1],
+                    itl_error["one_step_gd"]["test_error"],
+                    color="gray",
+                    label="itl 1-step gd",
+                    until_t=until_t,
+                )
+            elif plot_itl == "ridge":
+                plot_itl_ci(
+                    ax[1],
+                    itl_error["ridge"]["test_error"],
+                    color="black",
+                    label="itl ridge",
+                    until_t=until_t,
+                )
+            elif plot_itl == "gd":
+                plot_itl_ci(
+                    ax[1],
+                    itl_error["one_step_gd"]["test_error"],
+                    color="gray",
+                    label="itl 1-step gd",
+                    until_t=until_t,
+                )
+            ax[1].set_ylabel("mse")
+            ax[1].set_xlabel("t")
+            ax[1].legend()
+
+            return fig, ax
+
+        # Plot all of the learning curves
+        # Calculate meta_test_error
+
+        fig, ax = plot_mean_and_ci(
+            experiment_data, until_t=num_meta_train_batches, plot_itl="ridge"
+        )
+        fig.savefig(args.output_dir / "learning_curves.png")
 
     logging.info("Good bye!")

@@ -3,6 +3,9 @@ import json
 import random
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
+
+from active_meta_learning.data import EnvironmentDataSet
 
 
 def set_random_seeds(seed):
@@ -132,5 +135,54 @@ def dump_runs_to_json(runs_dict, save_path):
 ########
 
 
+def form_datasets_from_tasks(tasks, use_only_train=False):
+    datasets = []
+    for task in tasks:
+        X_tr, y_tr = task["train"]
+        X_te, y_te = task["test"]
+        if use_only_train:
+            X = X_tr
+            y = y_tr
+        else:
+            X = np.concatenate((X_tr, X_te), axis=0)
+            y = np.concatenate((y_tr, y_te), axis=0)
+        D = np.concatenate((X, y.reshape(-1, 1)), axis=1)
+        datasets.append(D)
+    # adds new axis
+    datasets = np.stack(datasets, axis=0)
+    return datasets
+
+
+def npfy_batches(batches):
+    new_batches = []
+    for batch in batches:
+        new_dict = {}
+        new_dict["train"] = (
+            batch["train"][0].numpy().squeeze(),
+            batch["train"][1].numpy().squeeze(),
+        )
+        new_dict["test"] = (
+            batch["test"][0].numpy().squeeze(),
+            batch["test"][1].numpy().squeeze(),
+        )
+        new_dict["w"] = batch["w"].squeeze()
+        new_batches.append(new_dict)
+    return new_batches
+
+
 def reorder_list(l, new_order):
     return [l[i] for i in new_order]
+
+
+def create_environment_dataloader(k_shot, k_query, env, noise_w, noise_y, batch_size):
+    # Create dataset and dataloader
+    env_dataset = EnvironmentDataSet(
+        k_shot, k_query, env, noise_w=noise_w, noise_y=noise_y
+    )
+    dataloader = DataLoader(
+        env_dataset,
+        batch_size=batch_size,
+        num_workers=0,
+        collate_fn=env_dataset.collate_fn,
+    )
+    return dataloader

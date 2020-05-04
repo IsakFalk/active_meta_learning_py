@@ -132,6 +132,7 @@ class HypercubeWithKVertexGaussian:
             W[i, :] = mu + self.s2 * np.random.randn(self.d)
         return W
 
+
 class HypercubeScaledAxesWithKVertexGaussian:
     def __init__(self, d, k, s2, mixture_vertices=None, axes_scales=None):
         self.d = d
@@ -166,7 +167,8 @@ class HypercubeScaledAxesWithKVertexGaussian:
 
     def _scale_mixture_vertices(self):
         self._scaled_mixture_vertices = [
-            self.axes_scales.reshape(-1, self.d) * vert for vert in self.mixture_vertices
+            self.axes_scales.reshape(-1, self.d) * vert
+            for vert in self.mixture_vertices
         ]
 
     def _sample_mixture(self):

@@ -61,7 +61,7 @@ def stringify_parameter_dictionary(d, joiner="-"):
     l = []
     for key, val in d.items():
         if type(val) == float:
-            l.append("{!s}={:.2f}".format(key, val))
+            l.append("{!s}={:.4f}".format(key, val))
         elif type(val) == int:
             l.append("{!s}={}".format(key, val))
         else:
