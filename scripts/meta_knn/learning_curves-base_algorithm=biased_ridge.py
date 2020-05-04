@@ -478,8 +478,8 @@ if __name__ == "__main__":
     d = env.d
     param_dict["env_attributes"] = vars(env)
 
-    k_shot = 0.2 * d
-    k_query = 0.2 * d
+    k_shot = int(0.2 * d)
+    k_query = int(0.2 * d)
     median_heuristic_n_subsamples = 300
     num_meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
