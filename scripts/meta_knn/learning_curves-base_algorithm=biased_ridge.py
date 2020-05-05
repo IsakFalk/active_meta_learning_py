@@ -477,6 +477,11 @@ if __name__ == "__main__":
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
     d = env.d
     param_dict["env_attributes"] = vars(env)
+    logging.info("Environment: {}".format(env_name))
+    logging.info("Environment attributed: {}".format(vars(env)))
+    k_shot = int(0.2 * d)
+    k_query = int(0.2 * d)
+    logging.info("d: {}, k_shot: {}, k_query: {}".format(d, k_shot, k_query))
 
     k_shot = int(0.2 * d)
     k_query = int(0.2 * d)
