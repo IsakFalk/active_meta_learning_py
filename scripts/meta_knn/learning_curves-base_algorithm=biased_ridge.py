@@ -478,20 +478,25 @@ if __name__ == "__main__":
     d = env.d
     param_dict["env_attributes"] = vars(env)
     logging.info("Environment: {}".format(env_name))
-    logging.info("Environment attributed: {}".format(vars(env)))
-    k_shot = int(0.2 * d)
-    k_query = int(0.2 * d)
+    k_shot = 25
+    k_query = 20
     logging.info("d: {}, k_shot: {}, k_query: {}".format(d, k_shot, k_query))
 
-    k_shot = int(0.2 * d)
-    k_query = int(0.2 * d)
-    median_heuristic_n_subsamples = 300
-    num_meta_train_batches = 400
+    median_heuristic_n_subsamples = 10
+    num_meta_train_batches = 10
     meta_train_batch_size = 1  # Hardcoded
-    num_meta_val_batches = 500
+    num_meta_val_batches = 4
     meta_val_batch_size = 1  # Hardcoded
-    num_meta_test_batches = 500
+    num_meta_test_batches = 5
     meta_test_batch_size = 1  # Hardcoded
+
+    # median_heuristic_n_subsamples = 300
+    # num_meta_train_batches = 400
+    # meta_train_batch_size = 1  # Hardcoded
+    # num_meta_val_batches = 500
+    # meta_val_batch_size = 1  # Hardcoded
+    # num_meta_test_batches = 500
+    # meta_test_batch_size = 1  # Hardcoded
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
