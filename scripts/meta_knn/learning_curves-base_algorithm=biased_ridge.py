@@ -463,16 +463,21 @@ if __name__ == "__main__":
     # experiment. This is a dictionary which looks as follows
     # Level 1:
     # experiment_data.keys() == ("aml", "itl")
+    # For "aml" and "itl"
     # Level 2:
     # experiment_data["aml"].keys() == ("data", "weights", "uniform")
     # experiment_data["itl"].keys() == ("ridge", "one_step_gd")
     # Level 3:
     # experiment_data["itl"][{"ridge", "one_step_gd"}].keys() == ("optimal_parameters", "test_error")
     # experiment_data["aml"][{"data", "weights", "uniform"}].keys() == ("ridge", "weights")
-    # Level 4
+    # Level 4:
     # experiment_data["aml"][{"data", "weights", "uniform"}][{"ridge", "weights"}].keys() == ("optimal_parameters", "test_error")
-
     experiment_data = {"aml": {}, "itl": {}}
+    # extra_info
+    # Extra dictionary containing the kh algorithm object
+    # including the sampled order and so on.
+    # Also contain the full datasets for train, val and test
+    extra_info = {"datasets": {}, "kh_objects": {}}
 
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
     d = env.d
@@ -482,21 +487,13 @@ if __name__ == "__main__":
     k_query = 20
     logging.info("d: {}, k_shot: {}, k_query: {}".format(d, k_shot, k_query))
 
-    median_heuristic_n_subsamples = 10
-    num_meta_train_batches = 10
+    median_heuristic_n_subsamples = 300
+    num_meta_train_batches = 400
     meta_train_batch_size = 1  # Hardcoded
-    num_meta_val_batches = 4
+    num_meta_val_batches = 500
     meta_val_batch_size = 1  # Hardcoded
-    num_meta_test_batches = 5
+    num_meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
-
-    # median_heuristic_n_subsamples = 300
-    # num_meta_train_batches = 400
-    # meta_train_batch_size = 1  # Hardcoded
-    # num_meta_val_batches = 500
-    # meta_val_batch_size = 1  # Hardcoded
-    # num_meta_test_batches = 500
-    # meta_test_batch_size = 1  # Hardcoded
 
     logging.info("Generating meta-train batches")
     # Sample meta-train
@@ -542,6 +539,12 @@ if __name__ == "__main__":
     test_task_ws = get_task_parameters(test_batches)
     logging.info("Done")
 
+    extra_info["datasets"] = {
+        "train": train_batches,
+        "val": val_batches,
+        "test": test_batches,
+    }
+
     train_datasets = form_datasets_from_tasks(train_batches)
     # Don't cheat, can only use support/train set for meta-test and meta-val
     tr_val_datasets = form_datasets_from_tasks(val_batches, use_only_train=True)
@@ -565,8 +568,7 @@ if __name__ == "__main__":
     one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
     rr = RidgeRegression(alpha=None)
     # Parameter grids
-    learning_rates = np.geomspace(1e-6, 1e0, 3)
-    alphas = np.geomspace(1e-8, 1e6, 5)
+    alphas = np.geomspace(1e-8, 1e3, 5)
 
     experiment_data["aml"] = {}
     ###
@@ -592,6 +594,7 @@ if __name__ == "__main__":
     )
     kh_D = KernelHerding(K_D)
     kh_D.run()
+    extra_info["kh_objects"]["data"] = kh_D
     logging.info("Done")
     logging.info("Getting optimal parameter and test error")
     aml_order = kh_D.sampled_order
@@ -610,6 +613,7 @@ if __name__ == "__main__":
     K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
     kh_w = KernelHerding(K_w)
     kh_w.run()
+    extra_info["kh_objects"]["weights"] = kh_w
     logging.info("Done")
     logging.info("Getting optimal parameter and test error")
     aml_order = kh_w.sampled_order
@@ -685,6 +689,8 @@ if __name__ == "__main__":
     hkl.dump(param_dict, args.output_dir / "parameters.hkl")
     # Experiment data
     hkl.dump(experiment_data, args.output_dir / "experiment_data.hkl")
+    # Extra info
+    hkl.dump(extra_info, args.output_dir / "extra_info.hkl")
 
     if args.plot:
         import json

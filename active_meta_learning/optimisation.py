@@ -9,26 +9,18 @@ def rho_t_func_kh(t):
 
 class KernelHerding:
     """
-    Notation, we let Qt denote the set of sampled points after finishing iteration t,
-    Ut denote the set of unsampled points after finishing iteration t. K_ab then corresponds
-    to the kernel matrix by taking the inner product \Phi_a^T \Phi_b in the RKHS.
+    Corrected version of the ones below, here we allow repetitions in datasets chosen.
     """
 
     def __init__(self, K, stop_t=None):
         self.K = K
         self.n = K.shape[0]
         self.stop_t = stop_t
-        if self.stop_t is None:
+        if stop_t is None:
             self.stop_t = self.n
-        self.sampled_order = np.zeros(stop_t).astype(int)
 
-        # These just help run the algorithm
-        # These are all boolean, a one represents that
-        # the x_i at that index has been sampled / unsampled respectively
-        self.initial_indices = np.ones(self.n).astype(bool)
-        self.sampled_indices = np.zeros(self.n).astype(bool)
-        self.unsampled_indices = ~self.sampled_indices
-        self.arange_indices = np.arange(0, self.n).astype(int)
+        self._full_dataset_indices = np.arange(0, self.n).astype(int)
+        self._sampled_indices = np.zeros(self.stop_t).astype(int)
 
         # Check for faults
         assert self.K.shape == (
@@ -40,74 +32,79 @@ class KernelHerding:
         assert self.stop_t > 0, "stop_t needs to be positive"
 
         # Sanity check: keep objective values for each iteration
-        self.objective_curve = np.zeros(self.stop_t)
+        # Note that we first use the normal KH curve, but for better debugging
+        # we will make this the MMD between P and Q_t for t=1:stop_t
+        self._objective_curve = np.zeros(self.stop_t)
 
     def _objective_func(self, t):
-        """Calculate the objective function using sampled_indices until time t
+        """Calculate the objective function using self._sampled_indices until time t
 
         Note that this is a vectorised version of the one in the paper"""
         # This gets the corresponding sub-kernel matrices
-        K_nUtm1 = self.K[np.ix_(self.initial_indices, self.unsampled_indices)]
-        K_Qtm1Utm1 = self.K[np.ix_(self.sampled_indices, self.unsampled_indices)]
+        # When we do the true algorithm, we compare against all
+        # If we remove indices, the comparison indieces are all of them
+        K_nn = self.K
+        K_Qn = self.K[self._sampled_indices]
+
+        # Since kernel herding greedily minimizes the MMD between P and Q
+        # we use this as our objective function as it is easire to reason about.
 
         # Original factor is T, but since we count from 0, need to increment by 1
-        # Get it in the form of the FW algorithm to be able to compare
-        J = (float(t) / self.n) * K_nUtm1.sum(axis=0) - K_Qtm1Utm1.sum(axis=0)
+        J = (1.0 / self.n) * K_nn.sum(axis=0) - (1.0 / t) * K_Qn.sum(axis=0)
         assert J.shape == (
-            self.unsampled_indices.sum(),
-        ), "The output shape of J.shape should be ({},), is {} ".format(
-            self.unsampled_indices.sum(), J.shape
-        )
+            self.n,
+        ), "The output shape of J.shape should be ({},), is {} ".format(self.n, J.shape)
         J = np.atleast_1d(J.squeeze())
         return J
 
-    def restart(self):
+    def _restart(self):
         """Start over, reinitialise everything"""
-        self.sampled_order = np.zeros(self.stop_t).astype(int)
-        self.initial_indices = np.ones(self.n).astype(bool)
-        self.sampled_indices = np.zeros(self.n).astype(bool)
-        self.unsampled_indices = ~self.sampled_indices
-        self.arange_indices = np.arange(0, self.n).astype(int)
-        self.objective_curve = np.zeros(self.stop_t)
+        self._full_dataset_indices = np.arange(0, self.n).astype(int)
+        self._sampled_indices = np.zeros(self.stop_t).astype(int)
+        self._objective_curve = np.zeros(self.stop_t)
 
     def run_kernel_herding(self):
         """Kernel herding on the empirical distribution of X through K
 
         Run kernel herding on the dataset (x_i)_i^n using the kernel matrix
         K represented as a numpy array of shape (n, n), where K_ij = K(x_i, x_j).
-        Since the herding algorithm gives a new ordering of the dataset corresponding
-        to what datapoint to include when we only return the indices of the new ordering.
-        This is an array called return_order such that return_order[t] = index of x returned at
-        end of t'th iteration of kernel herding.
 
         :param K: (np.ndarray, (n, n)) kernel matrix
         :param stop_t: (int, >0) stop running when t >= stop_t
 
         :return sampled_order: (np.array, (stop_t,)) the returned indices in the dataset for each t
         """
-        self.restart()
+        self._restart()
 
         # Initially (t=0) we sample x_0 always
-        self.sampled_order[0] = 0
-        self.sampled_indices[0] = True
-        self.unsampled_indices = ~self.sampled_indices
-        self.objective_curve[0] = np.nan
+        self._objective_curve[0] = np.nan
+        self._sampled_indices[0] = 0
 
-        for t in tqdm(range(1, self.stop_t)):
+        for t in range(1, self.stop_t):
             # The objective function of all points we can sample
             J = self._objective_func(t)
             # Get the index for the argmax
             J_argmax = J.argmax()
-            # The index is not correct as we removed all indices
-            # which has been sampled, so we map back to the correct index
-            map_back_to_correct_index = self.arange_indices[self.unsampled_indices]
-            sampled_index_at_t = map_back_to_correct_index[J_argmax]
-            # Update the index arrays
-            self.sampled_order[t] = sampled_index_at_t
-            self.sampled_indices[sampled_index_at_t] = True
-            self.unsampled_indices = ~self.sampled_indices
-            # Put objective value of t
-            self.objective_curve[t] = J.max()
+            self._sampled_indices[t] = J_argmax
+            self._objective_curve[t] = J[J_argmax]
+
+        self.sampled_order = self._sampled_indices
+
+    def calculate_mmd_objective(self):
+        self.mmd_curve = np.zeros(self.stop_t)
+        for t in range(self.stop_t):
+            self.mmd_curve[t] = self._mmd(t)
+
+    def _mmd(self, t):
+        K_nn = self.K
+        K_nt = self.K[self._sampled_indices[: t + 1]]
+        K_tt = self.K[np.ix_(self._sampled_indices, self._sampled_indices)]
+        mmd2 = (
+            (1.0 / self.n ** 2) * K_nn.sum()
+            - (2.0 / (self.n ** 2 * (t + 1))) * K_nt.sum()
+            + (1.0 / (t + 1) ** 2) * K_tt.sum()
+        )
+        return np.sqrt(mmd2)
 
     def run(self):
         """Run the algorithm, consistent interface for calling self.run_{algorithm}() to self.run()"""
