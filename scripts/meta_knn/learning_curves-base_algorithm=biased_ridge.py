@@ -568,6 +568,7 @@ if __name__ == "__main__":
     one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
     rr = RidgeRegression(alpha=None)
     # Parameter grids
+    learning_rates = np.geomspace(1e-3, 1e0, 5)
     alphas = np.geomspace(1e-8, 1e3, 5)
 
     experiment_data["aml"] = {}
