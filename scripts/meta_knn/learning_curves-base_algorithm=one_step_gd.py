@@ -18,7 +18,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from active_meta_learning.data import EnvironmentDataSet, UniformSphere
+from active_meta_learning.data import EnvironmentDataSet
 from active_meta_learning.data_utils import (
     aggregate_sampled_task_batches,
     coalesce_train_and_test_in_dicts,
