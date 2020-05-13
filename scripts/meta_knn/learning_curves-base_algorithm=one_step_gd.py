@@ -1,8 +1,7 @@
 import argparse
-import logging
 from pathlib import Path
 
-
+from loguru import logger
 import hickle as hkl
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -48,7 +47,6 @@ from active_meta_learning.estimators import (
 from active_meta_learning.project_parameters import SCRIPTS_DIR, SETTINGS_DATA_DIR
 from hpc_cluster.utils import extract_csv_to_dict
 
-logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -217,7 +215,7 @@ def cross_validate_aml(aml, cv_base_algorithm_params, cv_prototype_estimator_par
     opt_params = {"base_algorithm": None, "prototype_estimator": None}
     for base_params in base_algorithm_param_grid:
         for prototype_params in prototype_estimator_param_grid:
-            logging.info(
+            logger.info(
                 "Cross validating base / prototype params: {} / {}".format(
                     base_params, prototype_params
                 )
@@ -228,12 +226,12 @@ def cross_validate_aml(aml, cv_base_algorithm_params, cv_prototype_estimator_par
             aml.calculate_prototypes()
             aml.calculate_transfer_risk()
             current_loss = np.nanmean(aml.loss_matrix_)
-            logging.info("Current loss: {}".format(current_loss))
+            logger.info("Current loss: {}".format(current_loss))
             if current_loss < opt_loss:
                 opt_loss = current_loss
                 opt_params["base_algorithm"] = base_params
                 opt_params["prototype_estimator"] = prototype_params
-                logging.info(
+                logger.info(
                     "Best params so far {} / {}, with loss {:.4f}".format(
                         base_params, prototype_params, opt_loss
                     )
@@ -297,15 +295,15 @@ def cross_validate_itl(itl, cv_params):
     opt_loss = np.inf
     opt_params = None
     for params in param_grid:
-        logging.info("Cross validating params: {}".format(params))
+        logger.info("Cross validating params: {}".format(params))
         itl.set_params(params)
         itl.calculate_transfer_risk()
         current_loss = np.mean(itl.losses_)
-        logging.info("Current loss: {}".format(current_loss))
+        logger.info("Current loss: {}".format(current_loss))
         if current_loss < opt_loss:
             opt_loss = current_loss
             opt_params = params
-            logging.info(
+            logger.info(
                 "Best params so far {}, with loss {:.4f}".format(params, opt_loss)
             )
     return opt_params, opt_loss
@@ -369,11 +367,11 @@ def run_aml(
         aml_order,
         RidgeRegPrototypeEstimator(alpha=0.1),
     )
-    logging.info("Cross validating AML: RidgeReg")
+    logger.info("Cross validating AML: RidgeReg")
     opt_params, opt_loss = cross_validate_aml(
         model, {"learning_rate": learning_rates}, {"alpha": alphas}
     )
-    logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
+    logger.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
     # Reset model with optimal parameters
     # and tr-te
     model = MetaKNNExperiment(
@@ -388,7 +386,7 @@ def run_aml(
     model.set_params(opt_params)
     model.calculate_prototypes()
     model.calculate_transfer_risk()
-    logging.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
+    logger.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
     data["ridge"] = {"optimal_parameters": opt_params, "test_error": model.loss_matrix_}
 
     #
@@ -403,11 +401,11 @@ def run_aml(
         aml_order,
         TrueWeightPrototypeEstimator(),
     )
-    logging.info("Cross validating AML: TrueWeights")
+    logger.info("Cross validating AML: TrueWeights")
     opt_params, opt_loss = cross_validate_aml(
         model, {"learning_rate": learning_rates}, {}
     )
-    logging.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
+    logger.info("Optimal parameters: {}, loss {}".format(opt_params, opt_loss))
     # Reset model with optimal parameters
     # and tr-te
     model = MetaKNNExperiment(
@@ -422,7 +420,7 @@ def run_aml(
     model.set_params(opt_params)
     model.calculate_prototypes()
     model.calculate_transfer_risk()
-    logging.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
+    logger.info("Mean test error: {}".format(np.nanmean(model.loss_matrix_)))
     data["weights"] = {
         "optimal_parameters": opt_params,
         "test_error": model.loss_matrix_,
@@ -447,18 +445,18 @@ if __name__ == "__main__":
         "--plot", action="store_true",
     )
 
-    logging.info("Reading args")
+    logger.info("Reading args")
     args = parser.parse_args()
     args.csv_path = Path(args.csv_path)
     args.output_dir = Path(args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    logging.info("Done!")
-    logging.info("Extracting args")
+    logger.info("Done!")
+    logger.info("Extracting args")
     # read in line of parameters
     param_dict = extract_csv_to_dict(args.csv_path, args.extract_line)
     seed = param_dict["seed"]
     set_random_seeds(seed)
-    logging.info("random seeds set to {}".format(seed))
+    logger.info("random seeds set to {}".format(seed))
     k_nn = param_dict["k_nn"]
     env_name = param_dict["env_name"]
 
@@ -486,10 +484,10 @@ if __name__ == "__main__":
     env = hkl.load(SETTINGS_DATA_DIR / env_name)
     d = env.d
     param_dict["env_attributes"] = vars(env)
-    logging.info("Environment: {}".format(env_name))
+    logger.info("Environment: {}".format(env_name))
     k_shot = 25
     k_query = 20
-    logging.info("d: {}, k_shot: {}, k_query: {}".format(d, k_shot, k_query))
+    logger.info("d: {}, k_shot: {}, k_query: {}".format(d, k_shot, k_query))
 
     median_heuristic_n_subsamples = 300
     num_meta_train_batches = 400
@@ -499,7 +497,7 @@ if __name__ == "__main__":
     num_meta_test_batches = 500
     meta_test_batch_size = 1  # Hardcoded
 
-    logging.info("Generating meta-train batches")
+    logger.info("Generating meta-train batches")
     # Sample meta-train
     train_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w=0.0, noise_y=0.0)
     train_dataloader = DataLoader(
@@ -513,9 +511,9 @@ if __name__ == "__main__":
     train_batches_kh = convert_batches_to_fw_form(train_batches)
     train_batches = npfy_batches(train_batches)
     train_task_ws = get_task_parameters(train_batches)
-    logging.info("Done")
+    logger.info("Done")
 
-    logging.info("Generating meta-val batches")
+    logger.info("Generating meta-val batches")
     # Sample meta-val
     val_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w=0.0, noise_y=0.0)
     val_dataloader = DataLoader(
@@ -525,9 +523,9 @@ if __name__ == "__main__":
     val_batches_kh = convert_batches_to_fw_form(val_batches)
     val_batches = npfy_batches(val_batches)
     val_task_ws = get_task_parameters(val_batches)
-    logging.info("Done")
+    logger.info("Done")
 
-    logging.info("Generating meta-test batches")
+    logger.info("Generating meta-test batches")
     # Sample meta-test
     test_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w=0.0, noise_y=0.0)
     test_dataloader = DataLoader(
@@ -541,7 +539,7 @@ if __name__ == "__main__":
     test_batches_kh = convert_batches_to_fw_form(test_batches)
     test_batches = npfy_batches(test_batches)
     test_task_ws = get_task_parameters(test_batches)
-    logging.info("Done")
+    logger.info("Done")
 
     extra_info["datasets"] = {
         "train": train_batches,
@@ -554,34 +552,34 @@ if __name__ == "__main__":
     tr_val_datasets = form_datasets_from_tasks(val_batches, use_only_train=True)
     tr_test_datasets = form_datasets_from_tasks(test_batches, use_only_train=True)
 
-    logging.info("Calculating sigmas for data MMD")
+    logger.info("Calculating sigmas for data MMD")
     # Calculate base_s2 and meta_s2 from train set
     base_s2_D, meta_s2_D = calculate_double_gaussian_median_heuristics(
         train_datasets, n_base_subsamples=median_heuristic_n_subsamples
     )
-    logging.info("Done")
+    logger.info("Done")
 
-    logging.info("Building MMD matrices for tr, val, test")
+    logger.info("Building MMD matrices for tr, val, test")
     M_tr_val = np.sqrt(_mmd2_matrix(train_datasets, tr_val_datasets, base_s2_D))
     M_tr_te = np.sqrt(_mmd2_matrix(train_datasets, tr_test_datasets, base_s2_D))
-    logging.info("Done")
+    logger.info("Done")
 
-    logging.info("Generating learning curves")
+    logger.info("Generating learning curves")
 
     # Base algorithm
     one_step_gd = GDLeastSquares(learning_rate=None, adaptation_steps=1)
     rr = RidgeRegression(alpha=None)
     # Parameter grids
-    learning_rates = np.geomspace(1e-3, 1e0, 5)
-    alphas = np.geomspace(1e-8, 1e3, 5)
+    learning_rates = np.geomspace(1e-3, 1e0, 3)
+    alphas = np.geomspace(1e-8, 1e3, 4)
 
     experiment_data["aml"] = {}
     ###
     ### Baseline: Uniform sampling
     ###
-    logging.info("AML: uniform")
+    logger.info("AML: uniform")
     experiment_data["aml"]["uniform"] = {}
-    logging.info("Getting optimal parameter and test error")
+    logger.info("Getting optimal parameter and test error")
     aml_order = np.arange(num_meta_train_batches)
     data = run_aml(
         aml_order,
@@ -598,17 +596,17 @@ if __name__ == "__main__":
     ###
     ### AML: KH on data
     ###
-    logging.info("AML: KH data")
+    logger.info("AML: KH data")
     experiment_data["aml"]["data"] = {}
-    logging.info("Generating active train order")
+    logger.info("Generating active train order")
     K_D = _gaussian_kernel_mmd2_matrix(
         train_datasets, train_datasets, base_s2_D, meta_s2_D
     )
     kh_D = KernelHerding(K_D)
     kh_D.run()
     extra_info["kh_objects"]["data"] = kh_D
-    logging.info("Done")
-    logging.info("Getting optimal parameter and test error")
+    logger.info("Done")
+    logger.info("Getting optimal parameter and test error")
     aml_order = kh_D.sampled_order
     data = run_aml(
         aml_order,
@@ -625,16 +623,16 @@ if __name__ == "__main__":
     ###
     ### AML: KH on weights
     ###
-    logging.info("AML: KH weights")
+    logger.info("AML: KH weights")
     experiment_data["aml"]["weights"] = {}
-    logging.info("Generating active train order")
+    logger.info("Generating active train order")
     s2_w = median_heuristic(squareform(pdist(train_task_ws, "sqeuclidean")))
     K_w = gaussian_kernel_matrix(train_task_ws, s2_w)
     kh_w = KernelHerding(K_w)
     kh_w.run()
     extra_info["kh_objects"]["weights"] = kh_w
-    logging.info("Done")
-    logging.info("Getting optimal parameter and test error")
+    logger.info("Done")
+    logger.info("Getting optimal parameter and test error")
     aml_order = kh_w.sampled_order
     data = run_aml(
         aml_order,
@@ -652,27 +650,27 @@ if __name__ == "__main__":
     ### ITL
     ###
 
-    logging.info("ITL")
+    logger.info("ITL")
     experiment_data["itl"] = {}
     #
     # Ridge regression
     #
-    logging.info("Ridge Reg")
-    logging.info("Cross Validating")
+    logger.info("Ridge Reg")
+    logger.info("Cross Validating")
     rr = RidgeRegression(alpha=None)
     itl_rr = IndependentTaskLearning(val_batches, rr)
     itl_rr_opt_params, itl_rr_cross_val_loss = cross_validate_itl(
         itl_rr, {"alpha": alphas.tolist()}
     )
-    logging.info("Optimal learning rate and loss found:")
-    logging.info(
+    logger.info("Optimal learning rate and loss found:")
+    logger.info(
         "alpha={}, loss={:.4f}".format(
             itl_rr_opt_params["alpha"], itl_rr_cross_val_loss
         )
     )
     itl_rr.set_params(itl_rr_opt_params)
 
-    logging.info("Calculating meta-test error")
+    logger.info("Calculating meta-test error")
     itl_rr.tasks = test_batches
     itl_rr.calculate_transfer_risk()
 
@@ -680,26 +678,26 @@ if __name__ == "__main__":
         "optimal_parameters": itl_rr_opt_params,
         "test_error": itl_rr.losses_,
     }
-    logging.info("Done")
+    logger.info("Done")
 
     #
     # One step gd
     #
-    logging.info("One-step GD")
+    logger.info("One-step GD")
     itl_one_step_gd = IndependentTaskLearning(val_batches, one_step_gd)
     itl_one_step_gd_opt_params, itl_one_step_gd_cross_val_loss = cross_validate_itl(
         itl_one_step_gd,
         {"learning_rate": learning_rates.tolist(), "adaptation_steps": [1]},
     )
-    logging.info("Optimal learning rate and loss found:")
-    logging.info(
+    logger.info("Optimal learning rate and loss found:")
+    logger.info(
         "lr={}, loss={:.4f}".format(
             itl_one_step_gd_opt_params["learning_rate"], itl_one_step_gd_cross_val_loss
         )
     )
     itl_one_step_gd.set_params(itl_one_step_gd_opt_params)
 
-    logging.info("Calculating meta-test error")
+    logger.info("Calculating meta-test error")
     itl_one_step_gd.tasks = test_batches
     itl_one_step_gd.calculate_transfer_risk()
 
@@ -707,10 +705,10 @@ if __name__ == "__main__":
         "optimal_parameters": itl_one_step_gd_opt_params,
         "test_error": itl_one_step_gd.losses_,
     }
-    logging.info("Done")
+    logger.info("Done")
 
     # Dump data
-    logging.info("Dumping parameters and experiment_data")
+    logger.info("Dumping parameters and experiment_data")
     # Params
     hkl.dump(param_dict, args.output_dir / "parameters.hkl")
     # Experiment data
@@ -873,4 +871,4 @@ if __name__ == "__main__":
         )
         fig.savefig(args.output_dir / "learning_curves.png")
 
-    logging.info("Good bye!")
+    logger.info("Good bye!")
