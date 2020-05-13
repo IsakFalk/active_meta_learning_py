@@ -364,7 +364,9 @@ def run_aml(
         biased_rr,
         k_nn,
         aml_order,
-        RidgeRegPrototypeEstimator(alpha=None),
+        RidgeRegPrototypeEstimator(
+            alpha=0.1
+        ),  # Needs to be set to number, will be overwritten by optimal param after
     )
     logger.info("Cross validating AML: RidgeReg")
     opt_params, opt_loss = cross_validate_aml(
@@ -380,7 +382,7 @@ def run_aml(
         biased_rr,
         k_nn,
         aml_order,
-        RidgeRegPrototypeEstimator(alpha=None),
+        RidgeRegPrototypeEstimator(alpha=0.1),
     )
     model.set_params(opt_params)
     model.calculate_prototypes()
