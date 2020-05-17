@@ -19,6 +19,6 @@ array_job = ArrayJob(
     program="python3",
     tmem=8,
     h_vmem=8,
-    h_rt=3600 * 4,
+    h_rt=3600 * 8,
     gpu=False,
 )

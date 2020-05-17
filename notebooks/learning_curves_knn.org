@@ -1,0 +1,288 @@
+#+SETUPFILE: ~/life/references/templates/org/literate_programming_setupfile.org
+#+SETUPFILE: ~/life/references/templates/org/maths_setupfile.org
+#+PROPERTY: header-args :kernel meta_learning :tangle yes
+#+LATEX_HEADER_EXTRA: \setmainfont{Libre Baskerville}
+
+* Plot mean over runs
+For the setting of meta-knn with ridge-reg and true weights
+** Defining functions
+*** Setup
+#+begin_src jupyter-python
+import os
+from pathlib import Path
+import re
+import itertools
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import seaborn as sns
+import hickle as hkl
+
+from active_meta_learning.project_parameters import JOB_OUTPUT_DIR
+import hpc_cluster
+#+end_src
+
+*** Load data
+Define loading functionality
+#+begin_src jupyter-python
+def find_data_dirs(experiment_dir):
+    """walk experiment_dir to find data dirs
+
+    we assume that the data-dirs live immediately
+    below experiment_dir."""
+    data_dirs = []
+    for root, dirs, files in os.walk(experiment_dir):
+        for dir in dirs:
+            if re.match(r"n[1-9]+", str(dir)):
+                data_dirs.append(Path(root) / Path(dir))
+        break
+    # preliminarily sort by n{digit}
+    data_dirs = sorted(
+        data_dirs,
+        key=lambda relative_dir: int(relative_dir.name.replace("n", "")),
+    )
+    return data_dirs
+
+def read_data_dir(data_dir, file="parameters.hkl"):
+    """read hickel file from data_dir"""
+    return hkl.load(data_dir / file)
+#+end_src
+
+*** filter data
+we need to filter on environment name and the parameters so that we only get the
+different runs
+then we load all of the filtered data. this data will later be preprocessed
+#+begin_src jupyter-python
+def filter_func(dir, env_name_match_string, **params_match_dict):
+    keep = True
+    parameters = read_data_dir(dir, file="parameters.hkl")
+    if env_name_match_string in parameters["env_name"]:
+        for key, val in params_match_dict.items():
+            if parameters["env_attributes"][key] != val:
+                keep = False
+                break
+    else:
+        keep = False
+    return keep
+#+end_src
+
+*** preprocess data
+all of the data needs to be preprocessed to be an array of the shape ~(t,
+n_runs)~. we have ~n_runs=10~.
+#+begin_src jupyter-python
+def calculate_meta_test_error_means(filtered_data):
+    key_mapping = [
+        ("aml", "data", "ridge"),
+        ("aml", "data", "weights"),
+        ("aml", "weights", "ridge"),
+        ("aml", "weights", "weights"),
+        ("aml", "uniform", "ridge"),
+        ("aml", "uniform", "weights"),
+        ("itl", "ridge"),
+        ("itl", "one_step_gd")
+    ]
+    n_runs = len(filtered_data)
+    key = key_mapping[0]
+    t = filtered_data[0][key[0]][key[1]][key[2]]["test_error"].shape[0]
+    print("n_runs: {}, t: {}".format(n_runs, t))
+    meta_test_errors = {
+        "aml" : {
+            "data": {
+                "ridge": np.zeros((t, n_runs)),
+                "weights": np.zeros((t, n_runs))
+            },
+            "weights": {
+                "ridge": np.zeros((t, n_runs)),
+                "weights": np.zeros((t, n_runs))
+            },
+            "uniform": {
+                "ridge": np.zeros((t, n_runs)),
+                "weights": np.zeros((t, n_runs))
+            },
+        },
+        "itl" : {
+            "ridge": np.zeros(n_runs),
+            "one_step_gd": np.zeros(n_runs)
+        }
+    }
+
+    for i, data in enumerate(filtered_data):
+        for key in key_mapping:
+            if len(key) == 3:
+                meta_test_errors[key[0]][key[1]][key[2]][:, i] = data[key[0]][key[1]][key[2]]["test_error"].mean(axis=1)
+            elif len(key) == 2:
+                meta_test_errors[key[0]][key[1]][i] = data[key[0]][key[1]]["test_error"].mean()
+    return meta_test_errors
+#+end_src
+
+*** plots
+plot the learning curves
+#+begin_src jupyter-python
+def plot_aml_ci(ax, error, color, label, until_t):
+    mean = error.mean(axis=1)
+    std = np.std(error, axis=1)
+    ax.plot(mean[:until_t], label=label, color=color)
+    upper_ci = mean + std
+    lower_ci = mean - std
+    ax.fill_between(np.arange(until_t), lower_ci[:until_t], upper_ci[:until_t], color=color, alpha=0.2)
+
+def plot_itl_ci(ax, error, color, label, until_t):
+    mean = np.mean(error)
+    std = np.std(error)
+    ax.axhline(mean, label=label, color=color, linestyle="--")
+    upper_ci = mean + std
+    lower_ci = mean - std
+    ax.fill_between(np.arange(until_t), lower_ci, upper_ci, color=color, alpha=0.2)
+
+def plot_mean_and_ci(meta_test_error, until_t, plot_itl=True):
+    itl_error = meta_test_error["itl"]
+    data_error = meta_test_error["aml"]["data"]
+    weights_error = meta_test_error["aml"]["weights"]
+    uniform_error = meta_test_error["aml"]["uniform"]
+
+    # cmap: {"kh_data": red, "kh_weights": yellow, "uniform": blue, "itl_ridge": black, "itl_one_step_gd":gray}
+    fig, ax = plt.subplots(2, 1, figsize=(8, 8), sharex=True, sharey=True)
+
+    # prototype: ridge
+    ax[0].set_title("prototype: ridge estimates")
+    plot_aml_ci(ax[0], data_error["ridge"], color="red", label="ordering: kh on data", until_t=until_t)
+    plot_aml_ci(ax[0], weights_error["ridge"], color="orange", label="ordering: kh on task weights", until_t=until_t)
+    plot_aml_ci(ax[0], uniform_error["ridge"], color="blue", label="ordering: random", until_t=until_t)
+    if plot_itl is True:
+        plot_itl_ci(ax[0], itl_error["ridge"], color="black", label="itl ridge", until_t=until_t)
+        plot_itl_ci(ax[0], itl_error["one_step_gd"], color="gray", label="itl 1-step gd", until_t=until_t)
+    elif plot_itl == "ridge":
+        plot_itl_ci(ax[0], itl_error["ridge"], color="black", label="itl ridge", until_t=until_t)
+    elif plot_itl == "gd":
+        plot_itl_ci(ax[0], itl_error["one_step_gd"], color="gray", label="itl 1-step gd", until_t=until_t)
+
+    ax[0].set_ylabel("mse")
+    ax[0].legend()
+
+    # prototype: true weights
+    ax[1].set_title("prototype: true weights")
+    plot_aml_ci(ax[1], weights_error["weights"], color="orange", label="ordering: kh on task weights", until_t=until_t)
+    plot_aml_ci(ax[1], uniform_error["weights"], color="blue", label="ordering: random", until_t=until_t)
+    if plot_itl is True:
+        plot_itl_ci(ax[1], itl_error["ridge"], color="black", label="itl ridge", until_t=until_t)
+        plot_itl_ci(ax[1], itl_error["one_step_gd"], color="gray", label="itl 1-step gd", until_t=until_t)
+    elif plot_itl == "ridge":
+        plot_itl_ci(ax[1], itl_error["ridge"], color="black", label="itl ridge", until_t=until_t)
+    elif plot_itl == "gd":
+        plot_itl_ci(ax[1], itl_error["one_step_gd"], color="gray", label="itl 1-step gd", until_t=until_t)
+    ax[1].set_ylabel("mse")
+    ax[1].set_xlabel("t")
+    ax[1].legend()
+
+    return fig, ax
+
+def plot_and_save_hypersphere(d, until_t, experiment_dir, save_dir, plot_itl=True):
+    data_dirs = find_data_dirs(experiment_dir)
+    filtered_data_dirs = list(filter(lambda dir: filter_func(dir, "hypersphere", d=d), data_dirs))
+    filtered_data = [read_data_dir(dir, file="experiment_data.hkl") for dir in filtered_data_dirs]
+    meta_test_error = calculate_meta_test_error_means(filtered_data)
+    fig, ax = plot_mean_and_ci(meta_test_error, until_t=until_t, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(save_dir / "learning_curves-hypersphere-d={}-mean_and_ci.png".format(d))
+
+
+def plot_and_save_hypercube(d, k, until_t, experiment_dir, save_dir, plot_itl=True):
+    data_dirs = find_data_dirs(experiment_dir)
+    filtered_data_dirs = list(filter(lambda dir: filter_func(dir, "hypercube", d=d, k=k), data_dirs))
+    filtered_data = [read_data_dir(dir, file="experiment_data.hkl") for dir in filtered_data_dirs]
+    meta_test_error  = calculate_meta_test_error_means(filtered_data)
+    fig, ax = plot_mean_and_ci(meta_test_error, until_t=until_t, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(save_dir / "learning_curves-hypercube-d={}-k={}-mean_and_ci.png".format(d, k))
+#+end_src
+
+We plot two different scenarios for synthetic data
+- Uniform
+- Hypercube
+and create two helper functions to make this easier
+
+** Generating plots
+#+begin_src jupyter-python
+def plot_all(experiment_dir, save_dir, d_list, k_list, until_t, plot_itl):
+    # Uniform
+    for d in d_list:
+        try:
+            plot_and_save_hypersphere(d, until_t, experiment_dir, save_dir, plot_itl)
+        except Exception as excep:
+            print("Failed at for hypersphere d: {}".format(d))
+
+
+    # Hypercube
+    for (d, k) in itertools.product(d_list, k_list):
+        try:
+            plot_and_save_hypercube(d, k, until_t, experiment_dir, save_dir, plot_itl=plot_itl)
+        except Exception as excep:
+            print("Failed at for hypercube d, k: {}, {}".format(d, k))
+
+#+end_src
+
+#+RESULTS:
+
+*** Biased Ridge Reg
+#+begin_src jupyter-python
+experiment_dir = Path(JOB_OUTPUT_DIR) / "learning_curves-base_algorithm=biased_ridge"
+save_dir = Path(".") / "biased_ridge"
+save_dir.mkdir(exist_ok=True)
+#+end_src
+
+Plot it all. Let it rip.
+#+begin_src jupyter-python
+plot_itl="ridge"
+d_list = [10]
+k_list = [20]
+until_t = 200
+plot_all(experiment_dir, save_dir, d_list, k_list, until_t, plot_itl)
+#+end_src
+
+*** One Step GD
+#+begin_src jupyter-python
+experiment_dir = Path(JOB_OUTPUT_DIR) / "meta_knn" / "learning_curves-base_algorithm=one_step_gd"
+save_dir = Path(".") / "one_step_gd_itl"
+save_dir.mkdir(exist_ok=True)
+#+end_src
+
+#+RESULTS:
+
+Plot it all. Let it rip.
+#+begin_src jupyter-python
+plot_itl="one_step_gd"
+d_list = [10, 100, 500, 1000]
+k_list = [20]
+until_t = 200
+plot_all(experiment_dir, save_dir, d_list, k_list, until_t, plot_itl="gd")
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: n_runs: 10, t: 500
+: n_runs: 10, t: 500
+: n_runs: 9, t: 500
+: n_runs: 9, t: 500
+: n_runs: 10, t: 500
+: n_runs: 10, t: 500
+: n_runs: 6, t: 500
+: n_runs: 10, t: 500
+#+attr_org: :width 568
+[[file:./.ob-jupyter/3ff49209e4cb929dc3975de7520732e2fc0076a1.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/2cf407f56346641b718f0b774940f0e1106ef7c5.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/e554d577cc7873a054d383fc4f8fbc817202c264.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/ae5bdd0fab30b4db4e2088b423ac860f260d0b50.png]]
+#+attr_org: :width 561
+[[file:./.ob-jupyter/ed76bb2404262b28e1f1144cd0ef9637feb89485.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/927cb192f5d0e6497763612a71de17c8f3566920.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/7767182dc962f92f52ed1502ee063c8d4728ce04.png]]
+#+attr_org: :width 568
+[[file:./.ob-jupyter/30fdae8e3d901e02e85ddacaa9d937bef16c1ead.png]]
+:END:

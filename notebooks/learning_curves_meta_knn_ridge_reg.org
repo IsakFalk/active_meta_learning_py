@@ -1,0 +1,363 @@
+#+SETUPFILE: ~/life/references/templates/org/literate_programming_setupfile.org
+#+SETUPFILE: ~/life/references/templates/org/maths_setupfile.org
+#+PROPERTY: header-args :kernel meta_learning :tangle yes
+#+LATEX_HEADER_EXTRA: \setmainfont{Libre Baskerville}
+
+* Plot mean over runs
+For the setting of meta-knn with ridge-reg
+
+We have the following settings
+- Uniform Sphere
+  - d=10
+  - d=100
+  - d=500
+  - d=1000
+- Hypercube
+  - d=10
+    - k=5
+    - k=20
+  - d=100
+    - k=5
+    - k=20
+  - d=500
+    - k=5
+    - k=20
+  - d=1000
+    - k=5
+    - k=20
+
+and each of them are over 10 runs.
+
+** Defining functions
+*** Setup
+#+begin_src jupyter-python
+import os
+from pathlib import Path
+import re
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import seaborn as sns
+import hickle as hkl
+
+from active_meta_learning.project_parameters import JOB_OUTPUT_DIR
+import hpc_cluster
+#+end_src
+
+*** Load data
+Define loading functionality
+#+begin_src jupyter-python
+def find_data_dirs(experiment_dir):
+    """Walk experiment_dir to find data dirs
+
+    We assume that the data-dirs live immediately
+    below experiment_dir."""
+    data_dirs = []
+    for root, dirs, files in os.walk(experiment_dir):
+        for dir in dirs:
+            if re.match(r"n[1-9]+", str(dir)):
+                data_dirs.append(Path(root) / Path(dir))
+        break
+    # Preliminarily sort by n{digit}
+    data_dirs = sorted(
+        data_dirs,
+        key=lambda relative_dir: int(relative_dir.name.replace("n", "")),
+    )
+    return data_dirs
+
+def read_data_dir(data_dir, file="parameters.hkl"):
+    """Read hickel file from data_dir"""
+    return hkl.load(data_dir / file)
+#+end_src
+*** Filter data
+We need to filter on environment name and the parameters so that we only get the
+different runs
+#+begin_src jupyter-python
+def filter_func(dir, env_name_match_string, **params_match_dict):
+    keep = True
+    parameters = read_data_dir(dir, file="parameters.hkl")
+    if env_name_match_string in parameters["env_name"]:
+        for key, val in params_match_dict.items():
+            if parameters["env_attributes"][key] != val:
+                keep = False
+                break
+    else:
+        keep = False
+    return keep
+filtered_data_dirs = list(filter(lambda dir: filter_func(dir, "hypersphere", d=10), data_dirs))
+#+end_src
+
+Then we load all of the filtered data. This data will later be preprocessed
+#+begin_src jupyter-python
+filtered_data = [read_data_dir(dir, file="experiment_data.hkl") for dir in filtered_data_dirs]
+filtered_data[0]["uniform"].keys()
+#+end_src
+
+*** Preprocess data
+All of the data needs to be preprocessed to be an array of the shape ~(T,
+n_runs)~. We have ~n_runs=10~.
+#+begin_src jupyter-python
+n_runs = 10
+T = 400
+
+def calculate_meta_test_error_means(filtered_data, n_runs=10, T=400):
+    meta_test_error = {
+        "uniform": np.zeros((T, n_runs)),
+        "kh_data": np.zeros((T, n_runs)),
+        "kh_weights": np.zeros((T, n_runs)),
+        "itl": np.zeros(n_runs)
+    }
+    meta_test_error["uniform"][:5] = np.nan
+    meta_test_error["kh_data"][:5] = np.nan
+    meta_test_error["kh_weights"][:5] = np.nan
+    optimal_parameters = {
+        "uniform": {"alpha": np.zeros(n_runs), "lr": np.zeros(n_runs)},
+        "kh_data": {"alpha": np.zeros(n_runs), "lr": np.zeros(n_runs)},
+        "kh_weights": {"alpha": np.zeros(n_runs), "lr": np.zeros(n_runs)},
+        "itl": {"lr": np.zeros(n_runs)}
+    }
+
+    algorithms = ["uniform", "kh_data", "kh_weights"]
+    for i, data in enumerate(filtered_data):
+        for algorithm in algorithms:
+            optimal_parameters[algorithm]["alpha"][i] = data[algorithm]["optimal_parameters"]["ridge_alpha"]
+            optimal_parameters[algorithm]["lr"][i] = data[algorithm]["optimal_parameters"]["learning_rate"]
+            meta_test_error[algorithm][:, i] = data[algorithm]["test_error"].mean(axis=1)
+        optimal_parameters["itl"]["lr"][i] = data["itl"]["optimal_parameters"]["learning_rate"]
+        meta_test_error["itl"][i] = data["itl"]["test_error"].mean()
+    return meta_test_error, optimal_parameters
+#+end_src
+
+*** Plots
+Plot the learning curves
+#+begin_src jupyter-python
+def plot_all_plots(meta_test_error, optimal_parameters, ax, until_t, plot_itl=True, **plot_kwargs):
+    until_t = 100
+    t = np.arange(until_t)
+    color_dict = {"uniform": "blue", "kh_data": "red", "kh_weights": "orange"}
+    title = "Avg cross-val hyperparams (alpha, lr):\n"
+    algorithms = ["uniform", "kh_data", "kh_weights"]
+    for algorithm in algorithms:
+        opt_params = optimal_parameters[algorithm]
+        alpha = opt_params["alpha"].mean()
+        lr = opt_params["lr"].mean()
+        title += "{}: ({:.4g}, {:.4g})\n".format(algorithm, alpha, lr)
+        error = meta_test_error[algorithm]
+        ax.plot(error[:until_t], color=color_dict[algorithm], alpha=0.4, **plot_kwargs)
+        ax.plot(error[:until_t, 0], label=algorithm, color=color_dict[algorithm], alpha=0.4, **plot_kwargs)
+    # ITL
+    if plot_itl:
+        title += "{}: {:.4g}".format("itl", optimal_parameters["itl"]["lr"].mean())
+        itl_losses = meta_test_error["itl"]
+        for loss in itl_losses:
+            ax.axhline(loss, color='black', linestyle="--", **plot_kwargs)
+        ax.axhline(itl_losses[0], color='black', linestyle="--", label="ITL test error", **plot_kwargs)
+    ax.set_ylabel("MSE")
+    ax.set_xlabel("t")
+    ax.set_title(title)
+    ax.legend()
+    return ax
+
+def plot_mean_and_ci(meta_test_error, optimal_parameters, ax, until_t, plot_itl=True, **plot_kwargs):
+    until_t = 100
+    t = np.arange(until_t)
+    color_dict = {"uniform": "blue", "kh_data": "red", "kh_weights": "orange"}
+    title = "Avg cross-val hyperparams (alpha, lr):\n"
+    algorithms = ["uniform", "kh_data", "kh_weights"]
+    for algorithm in algorithms:
+        opt_params = optimal_parameters[algorithm]
+        alpha = opt_params["alpha"].mean()
+        lr = opt_params["lr"].mean()
+        title += "{}: ({:.4g}, {:.4g})\n".format(algorithm, alpha, lr)
+        error = meta_test_error[algorithm]
+        mean = error.mean(axis=1)
+        std = np.std(error, axis=1)
+        ax.plot(mean[:until_t], label=algorithm, color=color_dict[algorithm], **plot_kwargs)
+        upper_ci = mean + std
+        lower_ci = mean - std
+        ax.fill_between(t, lower_ci[:until_t], upper_ci[:until_t], color=color_dict[algorithm], alpha=0.2)
+    if plot_itl:
+        title += "{}: {:.4g}".format("itl", optimal_parameters["itl"]["lr"].mean())
+        itl_losses = meta_test_error["itl"]
+        itl_mean = np.mean(itl_losses)
+        itl_std = np.std(itl_losses)
+        ax.axhline(itl_mean, label="ITL test error", linestyle="--", color="black", **plot_kwargs)
+        itl_upper_ci = itl_mean + itl_std
+        itl_lower_ci = itl_mean - itl_std
+        ax.fill_between(t, itl_lower_ci, itl_upper_ci, color="black", alpha=0.2)
+    ax.set_ylabel("MSE")
+    ax.set_xlabel("t")
+    ax.set_title(title)
+    ax.legend()
+    return ax
+#+end_src
+
+** Plotting for uniform
+We plot for all of the values d = 10, 100, 500, 1000
+#+begin_src jupyter-python
+n_runs = 10
+T = 400
+def plot_and_save_hypersphere(d, n_runs, T, plot_itl=True):
+    experiment_dir = JOB_OUTPUT_DIR / "meta_knn" / "ridge_w" / "learning_curves"
+    data_dirs = find_data_dirs(experiment_dir)
+    filtered_data_dirs = list(filter(lambda dir: filter_func(dir, "hypersphere", d=d), data_dirs))
+    filtered_data = [read_data_dir(dir, file="experiment_data.hkl") for dir in filtered_data_dirs]
+    meta_test_error, optimal_parameters = calculate_meta_test_error_means(filtered_data, n_runs=n_runs, T=T)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plot_mean_and_ci(meta_test_error, optimal_parameters, ax, until_t=100, lw=1.0, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(Path(".") / "temp_figs" / "learning_curves-hypersphere-d={}-mean_and_ci.png".format(d))
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plot_all_plots(meta_test_error, optimal_parameters, ax, until_t=100, lw=1.0, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(Path(".") / "temp_figs" / "learning_curves-hypersphere-d={}-all_curves.png".format(d))
+#+end_src
+
+#+begin_src jupyter-python
+d = 10
+n_runs = 10
+plot_and_save_hypersphere(d, n_runs, T)
+#+end_src
+
+#+begin_src jupyter-python
+d = 100
+n_runs = 10
+plot_and_save_hypersphere(d, n_runs, T)
+#+end_src
+
+#+begin_src jupyter-python
+d = 500
+n_runs = 10
+plot_and_save_hypersphere(d, n_runs, T)
+#+end_src
+
+#+begin_src jupyter-python
+d = 1000
+n_runs = 10
+plot_and_save_hypersphere(d, n_runs, T)
+#+end_src
+** Plotting for hypercube
+We plot for all of the values d = 10, 100, 500, 1000 and for k = 5, 20
+#+begin_src jupyter-python
+n_runs = 10
+T = 400
+def plot_and_save_hypercube(d, k, n_runs, T, plot_itl=True):
+    experiment_dir = JOB_OUTPUT_DIR / "meta_knn" / "ridge_w" / "learning_curves"
+    data_dirs = find_data_dirs(experiment_dir)
+    filtered_data_dirs = list(filter(lambda dir: filter_func(dir, "hypercube", d=d, k=k), data_dirs))
+    filtered_data = [read_data_dir(dir, file="experiment_data.hkl") for dir in filtered_data_dirs]
+    meta_test_error, optimal_parameters = calculate_meta_test_error_means(filtered_data, n_runs=n_runs, T=T)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plot_mean_and_ci(meta_test_error, optimal_parameters, ax, until_t=100, lw=1.0, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(Path(".") / "temp_figs" / "learning_curves-hypercube-d={}-k={}-mean_and_ci.png".format(d, k))
+    fig, ax = plt.subplots(figsize=(8, 6))
+    plot_all_plots(meta_test_error, optimal_parameters, ax, until_t=100, lw=1.0, plot_itl=plot_itl)
+    plt.tight_layout()
+    fig.savefig(Path(".") / "temp_figs" / "learning_curves-hypercube-d={}-k={}-all_curves.png".format(d, k))
+#+end_src
+
+*** k = 5
+#+begin_src jupyter-python
+k = 5
+plot_itl = False
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+d = 10
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/3189e707848989e1d4ad874c1469fce8833391bc.png]]
+[[file:./.ob-jupyter/8c465e27e193a7b39f9da971024073b8cbd2f2e6.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 100
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/5042045fc925cb3725b8e044052d62511a904c3a.png]]
+[[file:./.ob-jupyter/7d08464f3ef4657911e322bf870b3eb58fe480d7.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 500
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/4caad69b422b6c3a74f8fcc1bc133e3e4dce06a5.png]]
+[[file:./.ob-jupyter/aeaa239ccdb7613ab9e467eb45bf3aff2729ba4a.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 1000
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/369c0d6310f312ea65472fe0a92b1ef583fb740b.png]]
+[[file:./.ob-jupyter/b867c4d065d8297f3b18836257a9afbac2a0cf6f.png]]
+:END:
+
+*** k = 20
+#+begin_src jupyter-python
+k = 20
+#+end_src
+
+#+RESULTS:
+
+#+begin_src jupyter-python
+d = 10
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/28625b8339bd2c116faa20b0497fe27cc07bea6a.png]]
+[[file:./.ob-jupyter/fbef454d0a5087ec37fd101a1b3e7c5bc3ebbd27.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 100
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/356ad81576e4cbf1dcc585787d26c9208c653481.png]]
+[[file:./.ob-jupyter/210ca4354ea7ddc1636be27a3bdfe35c458d94f8.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 500
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/792e1ccd13a1f39d49ba54b999e1b9bb9aa088ba.png]]
+[[file:./.ob-jupyter/1b770296fb5499ea53240d8fd26f17906dab7e52.png]]
+:END:
+
+#+begin_src jupyter-python
+d = 1000
+plot_and_save_hypercube(d, k, n_runs, T, plot_itl)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+[[file:./.ob-jupyter/af0c2909712e5ac576dfe0857fde6a77d4d0807e.png]]
+[[file:./.ob-jupyter/0e3f76f4990af80b7d9d571264a29023acb6865f.png]]
+:END:

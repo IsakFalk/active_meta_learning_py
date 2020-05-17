@@ -220,7 +220,15 @@ class GaussianNoiseMixture:
 
 
 class EnvironmentDataSet(IterableDataset):
-    def __init__(self, k_shot, k_query, env, noise_w=0.01, noise_y=0.01):
+    def __init__(
+        self,
+        k_shot,
+        k_query,
+        env,
+        noise_w=0.01,
+        noise_y=0.01,
+        y_func=lambda X, w: X @ w,
+    ):
         self.k_shot = k_shot
         self.k_query = k_query
         self.k_total = k_shot + k_query
@@ -228,6 +236,7 @@ class EnvironmentDataSet(IterableDataset):
         self.noise_w = noise_w
         self.noise_y = noise_y
         self.d = self.env.d
+        self.y_func = y_func
 
     def _sample_task(self):
         while True:
@@ -236,7 +245,7 @@ class EnvironmentDataSet(IterableDataset):
             ) * np.random.randn(self.d).reshape(-1, 1)
             assert task_w.shape == (self.d, 1), "{}".format(task_w.shape)
             X = np.random.rand(self.k_total, self.d)
-            Y = X @ task_w
+            Y = self.y_func(X, task_w)
             # Allow noise to be a function, noise takes as input
             # w, X, Y
             if callable(self.noise_y):

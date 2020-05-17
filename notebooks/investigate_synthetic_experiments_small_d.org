@@ -1,0 +1,731 @@
+#+SETUPFILE: ~/life/references/templates/org/literate_programming_setupfile.org
+#+SETUPFILE: ~/life/references/templates/org/maths_setupfile.org
+#+PROPERTY: header-args :kernel meta_learning :tangle yes :resuls output
+#+LATEX_HEADER_EXTRA: \setmainfont{Libre Baskerville}
+
+* Introduction
+:LOGBOOK:
+CLOCK: [2020-05-12 Tue 15:51]--[2020-05-12 Tue 16:16] =>  0:25
+CLOCK: [2020-05-12 Tue 13:27]--[2020-05-12 Tue 13:52] =>  0:25
+CLOCK: [2020-05-12 Tue 11:57]--[2020-05-12 Tue 12:22] =>  0:25
+:END:
+Investigate why and how the kernel herding procedure fail on synthetic
+experiments. We will look at both hypercube and sphere in 2d, so that we can
+visualise it well.
+
+Import necessary libraries
+#+begin_src jupyter-python
+import os
+from pathlib import Path
+import re
+
+from loguru import logger
+import numpy as np
+from scipy.spatial.distance import pdist, squareform
+from sklearn.metrics import mean_squared_error
+from sklearn.model_selection import ParameterGrid
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from mpl_toolkits.mplot3d import Axes3D
+import seaborn as sns
+import hickle as kl
+from torch.utils.data import DataLoader
+
+# AML imports
+from active_meta_learning.data import (
+    EnvironmentDataSet,
+    UniformSphere,
+    HypercubeWithKVertexGaussian,
+    VonMisesFisherMixture,
+)
+from active_meta_learning.data_utils import (
+    aggregate_sampled_task_batches,
+    coalesce_train_and_test_in_dicts,
+    convert_batches_to_fw_form,
+    convert_batches_to_np,
+    get_task_parameters,
+    remove_batched_dimension_in_D,
+    reorder_list,
+    set_random_seeds,
+    form_datasets_from_tasks,
+    npfy_batches,
+)
+from active_meta_learning.kernels import (
+    gaussian_kernel_matrix,
+    gaussian_kernel_mmd2_matrix,
+    median_heuristic,
+    mmd2,
+)
+from active_meta_learning.optimisation import KernelHerding
+from active_meta_learning.estimators import (
+    RidgeRegression,
+    BiasedRidgeRegression,
+    RidgeRegPrototypeEstimator,
+    TrueWeightPrototypeEstimator,
+    GDLeastSquares,
+)
+#+end_src
+
+#+RESULTS:
+
+** Functions
+Additional functions which will be use
+*** Plotting
+#+begin_src jupyter-python
+def plot_task_weights(tasks, ax):
+    ws = get_task_parameters(tasks)
+    ax.scatter(ws[:, 0], ws[:, 1])
+    return ax
+
+def plot_kh_weights(kh_w, kh_D, train_tasks, until_t=10):
+    ws = get_task_parameters(train_tasks)
+    fig, ax = plt.subplots(1, 3, figsize=(4 * 3, 4))
+    bbox = dict(boxstyle="round", fc="0.8")
+    # kh_w
+    ax[0].scatter(ws[:, 0], ws[:, 1], alpha=0.2, color="black")
+    ws_w = ws[kh_w.sampled_order[:until_t]]
+    ax[0].scatter(ws_w[:until_t, 0], ws_w[:until_t, 1], color="red")
+    for i in range(until_t):
+        ax[0].annotate(i+1, (ws_w[i, 0], ws_w[i, 1]), bbox=bbox, size=10)
+    ax[0].set_title("First {} chosen point (KH weights)".format(until_t))
+
+    # kh_D
+    ax[1].scatter(ws[:, 0], ws[:, 1], alpha=0.2, color="black")
+    ws_D = ws[kh_D.sampled_order[:until_t]]
+    ax[1].scatter(ws_D[:until_t, 0], ws_D[:until_t, 1], color="red")
+    for i in range(until_t):
+        ax[1].annotate(i+1, (ws_D[i, 0], ws_D[i, 1]), bbox=bbox, size=10)
+    ax[1].set_title("First {} chosen point (KH data)".format(until_t))
+
+    # No reordering
+    ax[2].scatter(ws[:, 0], ws[:, 1], alpha=0.2, color="black")
+    ws_u = ws[np.random.permutation(ws.shape[0])[:until_t]]
+    ax[2].scatter(ws_u[:until_t, 0], ws_u[:until_t, 1], color="red")
+    for i in range(until_t):
+        ax[2].annotate(i+1, (ws_u[i, 0], ws_u[i, 1]), bbox=bbox, size=10)
+    ax[2].set_title("First {} chosen point (Random)".format(until_t))
+    plt.tight_layout()
+
+    return ax
+
+def gen_3d_ax():
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    return fig, ax
+
+def plot_task_lin_reg(task, ax):
+    X_tr, y_tr = task["train"]
+    X_te, y_te = task["test"]
+    # train
+    ax.scatter(X_tr[:, 0], X_tr[:, 1], y_tr, c="blue", label="train set")
+    # test
+    ax.scatter(X_te[:, 0], X_te[:, 1], y_te, c="red", label="test set")
+    ax.legend()
+    return ax
+
+def plot_aml_ci(ax, error, color, label, until_t):
+    mean = error.mean(axis=1)
+    std = np.std(error, axis=1)
+    ax.plot(mean[:until_t], label=label, color=color)
+    upper_ci = mean + std
+    lower_ci = mean - std
+    ax.fill_between(
+        np.arange(until_t),
+        lower_ci[:until_t],
+        upper_ci[:until_t],
+        color=color,
+        alpha=0.2,
+    )
+
+def plot_itl_ci(ax, error, color, label, until_t):
+    mean = np.mean(error)
+    std = np.std(error)
+    ax.axhline(mean, label=label, color=color, linestyle="--")
+    upper_ci = mean + std
+    lower_ci = mean - std
+    ax.fill_between(
+        np.arange(until_t), lower_ci, upper_ci, color=color, alpha=0.2
+    )
+
+def get_ci(matrix):
+    # row is time, columns are runs
+    mean = np.mean(matrix, axis=1)
+    std = np.std(matrix, axis=1)
+    return mean, mean - std, mean + std
+#+end_src
+
+#+RESULTS:
+
+*** Data
+#+begin_src jupyter-python
+def generate_data(env, noise_w, noise_y, k_shot, k_query, num_train_tasks=100, num_val_tasks=100, num_test_tasks=100):
+    env_dataset = EnvironmentDataSet(k_shot, k_query, env, noise_w, noise_y)
+    dataloader = DataLoader(
+        env_dataset, collate_fn=env_dataset.collate_fn, batch_size=1,
+    )
+    # Train data
+    train_tasks = aggregate_sampled_task_batches(dataloader, num_train_tasks)
+    train_tasks_kh = convert_batches_to_fw_form(train_tasks)
+    train_tasks = npfy_batches(train_tasks)
+
+    # Val data
+    val_tasks = aggregate_sampled_task_batches(dataloader, num_val_tasks)
+    val_tasks_kh = convert_batches_to_fw_form(val_tasks)
+    val_tasks = npfy_batches(val_tasks)
+
+    # Test data
+    test_tasks = aggregate_sampled_task_batches(dataloader, num_test_tasks)
+    test_tasks_kh = convert_batches_to_fw_form(test_tasks)
+    test_tasks = npfy_batches(test_tasks)
+    return train_tasks, train_tasks_kh, val_tasks, val_tasks_kh, test_tasks, test_tasks_kh
+
+def _mmd2_matrix(A, B, base_s2):
+    assert len(A.shape) == 3
+    m, n, d = A.shape
+    assert len(B.shape) == 3
+    p, q, l = B.shape
+    M2 = np.zeros((m, p))
+    for i in range(m):
+        for j in range(p):
+            K_xx = gaussian_kernel_matrix(A[i], s2=base_s2)
+            K_yy = gaussian_kernel_matrix(B[j], s2=base_s2)
+            K_xy = gaussian_kernel_matrix(A[i], B[j], s2=base_s2)
+            M2[i, j] = mmd2(K_xx, K_yy, K_xy)
+    return M2
+
+def _gaussian_kernel_mmd2_matrix(A, B, base_s2, meta_s2):
+    """Calculate the double gaussian kernel
+
+    Calculate the double gaussian kernel matrix between A and B
+    using base_s2 for the inner and meta_s2 for the outer level
+    """
+    M2 = _mmd2_matrix(A, B, base_s2)
+    return np.exp(-0.5 * M2 / meta_s2)
+
+def calculate_double_gaussian_median_heuristics(
+    A, n_base_subsamples=None, n_meta_subsamples=None
+):
+    """A.shape = (m, n, d), m is number of datasets, n is the size, d is the dimension"""
+    assert len(A.shape) == 3
+    m, n, d = A.shape
+    if n_base_subsamples is None:
+        vec_A = A.reshape(-1, d)
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
+    else:
+        vec_A = A.reshape(-1, d)
+        subsample_indices = np.random.permutation(vec_A.shape[0])[:n_base_subsamples]
+        vec_A = vec_A[subsample_indices]
+        pairwise_square_dists = squareform(pdist(vec_A, "sqeuclidean"))
+    base_s2 = median_heuristic(pairwise_square_dists)
+    M2 = np.zeros((m, m))
+    for i in range(m):
+        for j in range(i):
+            K_xx = gaussian_kernel_matrix(A[i], s2=base_s2)
+            # K_xx = K_xx + np.eye(n)*eps
+            K_yy = gaussian_kernel_matrix(A[j], s2=base_s2)
+            # K_yy = K_yy + np.eye(n)*eps
+            K_xy = gaussian_kernel_matrix(A[i], A[j], s2=base_s2)
+            M2[i, j] = mmd2(K_xx, K_yy, K_xy)
+    # Only have lower diagonal entries and diag=0
+    # this way we avoid computing m(m-1)/2 entries
+    M2 = M2 + M2.T
+    meta_s2 = median_heuristic(M2, n_meta_subsamples)
+
+    return base_s2, meta_s2
+#+end_src
+
+#+RESULTS:
+*** Meta-learning
+:LOGBOOK:
+CLOCK: [2020-05-13 Wed 15:37]--[2020-05-13 Wed 16:02] =>  0:25
+:END:
+#+begin_src jupyter-python
+class IndependentTaskLearning:
+    def __init__(self, tasks, algorithm, loss=mean_squared_error):
+        """
+        :param tasks: tasks that ITL will be performed over by algorithm
+        :type tasks: list of tasks, where each task is a dict with keys ("train", "test")
+            and values (X_tr, y_tr), tuple of numpy arrays
+        :param algorithm: algorithm implementing sklearn fit / predict framework
+        :type algorithm: instance of predictor class with fit / predict defined
+        :param loss: loss function taking loss(y, y_pred)
+        :type loss: loss(y: np.ndarray, y_pred: np.ndarray) -> float
+        """
+        self.tasks = tasks
+        self.algorithm = algorithm
+        self.loss = loss
+
+    def fit(self, task):
+        """Fit `algorithm` to the i'th task"""
+        X_tr, y_tr = task["train"]
+        self.algorithm.fit(X_tr, y_tr)
+
+    def predict(self, task):
+        X_te, _ = task["test"]
+        return self.algorithm.predict(X_te)
+
+    def get_loss(self, task):
+        _, y_te = task["test"]
+        self.fit(task)
+        y_pred = self.predict(task)
+        return self.loss(y_pred, y_te)
+
+    def calculate_transfer_risk(self):
+        # Collect loss for each task in tasks
+        self.losses_ = []
+        self.weights_ = []
+        for task in self.tasks:
+            self.losses_.append(self.get_loss(task))
+            self.weights_.append(self.algorithm.w_hat_)
+        self.losses_ = np.array(self.losses_)
+        self.weights_ = np.array(self.weights_)
+
+    def set_params(self, params):
+        """Update paramaters of algorithm"""
+        self.algorithm.set_params(**params)
+
+    def get_params(self):
+        """Update paramaters of algorithm"""
+        return self.algorithm.get_params()
+
+def cross_validate_itl(itl, cv_params):
+    """Cross validate itl over cv_params
+
+    itl is an object of class IndependentTaskLearning
+    and cv_params is a dictionary of the values for each
+    parameter."""
+    param_grid = ParameterGrid(cv_params)
+    opt_loss = np.inf
+    opt_params = None
+    for params in param_grid:
+        logger.info("Cross validating params: {}".format(params))
+        itl.set_params(params)
+        itl.calculate_transfer_risk()
+        current_loss = np.mean(itl.losses_)
+        logger.info("Current loss: {}".format(current_loss))
+        if current_loss < opt_loss:
+            opt_loss = current_loss
+            opt_params = params
+            logger.info(
+                "Best params so far {}, with loss {:.4f}".format(params, opt_loss)
+            )
+    return opt_params, opt_loss
+
+
+class MetaKNNExperiment:
+    """Full experiment optimised for speed
+
+    This does not adhere to the sklearn like
+    fit/transform/predict framework."""
+
+    def __init__(
+        self,
+        train_tasks,
+        test_tasks,
+        dist_tr_te,
+        base_algorithm,
+        k_nn,
+        train_task_reordering,
+        prototype_estimator,  # transformer prototype
+    ):
+        self.train_tasks = train_tasks
+        self.test_tasks = test_tasks
+        self.dist_tr_te = dist_tr_te
+        self.base_algorithm = base_algorithm
+        self.k_nn = k_nn
+        self.train_task_reordering = train_task_reordering
+        self.prototype_estimator = prototype_estimator
+        self.d = self.train_tasks[0]["w"].shape[0]
+
+        self.T_tr, self.T_te = len(train_tasks), len(test_tasks)
+        assert self.dist_tr_te.shape == (self.T_tr, self.T_te)
+        self._reorder()
+        self._form_datasets_from_tasks()
+        self.calculate_prototypes()
+
+    def _reorder(self):
+        self.train_tasks = [self.train_tasks[i] for i in self.train_task_reordering]
+        self.dist_tr_te = self.dist_tr_te[
+            np.ix_(self.train_task_reordering, np.arange(self.T_te))
+        ]
+
+    def _form_datasets_from_tasks(self):
+        self.train_datasets = form_datasets_from_tasks(self.train_tasks)
+        self.test_datasets = form_datasets_from_tasks(self.test_tasks)
+        self.datasets = np.concatenate(
+            [self.train_datasets, self.test_datasets], axis=0
+        )
+
+    def calculate_prototypes(self):
+        """Recalculate prototypes using prototype_estimator
+
+        This allows us to cross-validate after we change the prototype
+        estimator parameters"""
+        self.prototypes = self.prototype_estimator.transform(self.train_tasks)
+
+    def _adapt(self, i, t):
+        """Adapt to one task with index i when meta-train set is of size t"""
+        test_task = self.test_tasks[i]
+        X_tr, y_tr = test_task["train"]
+        distances = self.dist_tr_te[:t, i]
+
+        knn_prototypes = self.prototypes[np.argsort(distances)[: self.k_nn], :]
+
+        w_0 = np.mean(knn_prototypes, axis=0)
+        self.w_0_[t, i] = w_0
+        self.base_algorithm.fit(X_tr, y_tr, w_0=w_0)
+        self.w_hat_[t, i] = self.base_algorithm.w_hat_
+
+    def _loss(self, i, t):
+        test_task = self.test_tasks[i]
+        X_te, y_te = test_task["test"]
+        self._adapt(i, t)
+        return mean_squared_error(y_te, self.base_algorithm.predict(X_te))
+
+    def calculate_transfer_risk(self):
+        """Calculate the transfer risk"""
+        # The loss matrix is a matrix of size (T_tr, T_te)
+        # Note that the first self.k_nn columns are nans selfince
+        # we do not fill them in as not eno ugh prototypes are available
+        self.loss_matrix_ = np.zeros((self.T_tr, self.T_te))
+        self.loss_matrix_[: self.k_nn, :] = np.nan
+        # Additional info
+        self.w_0_ = np.zeros((self.T_tr, self.T_te, self.d))
+        self.w_hat_ = np.zeros((self.T_tr, self.T_te, self.d))
+        # Each t represents using meta-train instances up until t according to
+        # ordering as prototypes. We need to start at k_nn to be able to find
+        # k_nn neighbours
+        for t in range(self.k_nn, self.T_tr):
+            for i in range(self.T_te):
+                self.loss_matrix_[t, i] = self._loss(i, t)
+
+    def set_base_algorithm_params(self, params):
+        self.base_algorithm.set_params(**params)
+
+    def get_base_algorithm_params(self):
+        return self.base_algorithm.get_params()
+
+    def set_prototype_estimator_params(self, params):
+        self.prototype_estimator.set_params(**params)
+
+    def get_prototype_estimator_params(self):
+        return self.prototype_estimator.get_params()
+
+    def set_params(self, params):
+        # Need to catch estimator having no params
+        self.set_base_algorithm_params(params["base_algorithm"])
+        self.set_prototype_estimator_params(params["prototype_estimator"])
+
+    def get_params(self):
+        return {
+            "base_algorithm": self.get_base_algorithm_params(),
+            "prototype_estimator": self.get_prototype_estimator_params(),
+        }
+#+end_src
+
+#+RESULTS:
+
+** Hypersphere
+:LOGBOOK:
+CLOCK: [2020-05-13 Wed 16:14]--[2020-05-13 Wed 16:39] =>  0:25
+CLOCK: [2020-05-12 Tue 20:26]--[2020-05-12 Tue 20:51] =>  0:25
+CLOCK: [2020-05-12 Tue 14:41]--[2020-05-12 Tue 15:06] =>  0:25
+CLOCK: [2020-05-12 Tue 14:10]--[2020-05-12 Tue 14:35] =>  0:25
+:END:
+All the data generated on the hypersphere.
+#+begin_src jupyter-python
+def generate_hypersphere_data(
+    d, noise_w, noise_y, k_shot, k_query, num_train_tasks=100, num_val_tasks=100, num_test_tasks=100
+):
+    env = UniformSphere(d)
+    return generate_data(env, noise_w, noise_y, k_shot, k_query, num_train_tasks, num_val_tasks, num_test_tasks)
+
+train_tasks, train_tasks_kh, val_tasks, val_tasks_kh, test_tasks, test_tasks_kh = generate_hypersphere_data(2, 0.01, 0.01, 20, 25, 100, 80, 120)
+train_datasets = form_datasets_from_tasks(train_tasks)
+val_datasets = form_datasets_from_tasks(val_tasks)
+test_datasets = form_datasets_from_tasks(test_tasks)
+
+train_ws = get_task_parameters(train_tasks)
+val_ws = get_task_parameters(val_tasks)
+test_ws = get_task_parameters(test_tasks)
+#+end_src
+
+#+RESULTS:
+
+Plotting the weights
+#+begin_src jupyter-python
+fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+plot_task_weights(train_tasks, ax)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.axes._subplots.AxesSubplot at 0x7f29ab6e8d90>
+[[file:./.ob-jupyter/5068c68232117ae66d773dbbc447cb8276ed9eec.png]]
+:END:
+
+Plot of the actual linear regression datasets generated. We pick 3 random tasks
+which differ
+#+begin_src jupyter-python
+fig = plt.figure(figsize=(8, 16))
+axes = [fig.add_subplot(3, 1, i, projection="3d") for i in range(1, 4)]
+rand_idx = np.random.permutation(20)
+for i, ax in enumerate(axes):
+    task = train_tasks[rand_idx[i]]
+    plot_task_lin_reg(task, ax)
+    w = task["w"]
+    ax.set_title("w: ({:.2f}, {:.2f})".format(w[0], w[1]))
+#+end_src
+
+#+RESULTS:
+[[file:./.ob-jupyter/de37ba734f3cc255fa9a0e3774cbfeb9944625fe.png]]
+
+From the above plot we can see how they differ, since we are assuming a linear
+regression setup the points all lie on hyperspheres.
+
+Now we consider how the different KH methods pick points.
+#+begin_src jupyter-python
+# KH on data
+base_s2_D, meta_s2_D = calculate_double_gaussian_median_heuristics(
+    train_datasets, n_base_subsamples=200
+)
+K_D = _gaussian_kernel_mmd2_matrix(
+    A=train_datasets, B=train_datasets, base_s2=base_s2_D, meta_s2=meta_s2_D
+)
+# KH on weights
+train_task_ws = get_task_parameters(train_tasks)
+ws_dataset = train_task_ws[:, np.newaxis, :]
+base_s2_w, meta_s2_w = calculate_double_gaussian_median_heuristics(
+    ws_dataset, n_base_subsamples=200
+)
+K_w = _gaussian_kernel_mmd2_matrix(
+    A=ws_dataset, B=ws_dataset, base_s2=base_s2_w, meta_s2=meta_s2_w
+)
+#+end_src
+
+#+RESULTS:
+
+Investigate how the kernel matrix look like.
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+ax.imshow(K_D, vmin=0.0, vmax=1.0)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.image.AxesImage at 0x7f29ab349790>
+#+attr_org: :width 252
+[[file:./.ob-jupyter/56cd70ce23fca37b8bbf472fcf558acc278a8dcf.png]]
+:END:
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+ax.imshow(K_w, vmin=0.0, vmax=1.0)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.image.AxesImage at 0x7f29ab273b10>
+#+attr_org: :width 252
+[[file:./.ob-jupyter/189e8ba9170eb30aa08adafbb85bf6a8170b62ad.png]]
+:END:
+
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+_ = ax.hist((K_w - K_D)[np.triu_indices(100, k=1)], range=(-1.0, 1.0), density=True)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 373
+[[file:./.ob-jupyter/2842f65cdf4c6b76bd89141603fc7765a6d3a6ff.png]]
+:END:
+
+Looks pretty nice above, the weights and data dataset kernel matrix seem to find
+something reasonable as the difference is not too unlike.
+
+Running the actual kernel herding algorithms
+#+begin_src jupyter-python
+kh_D = KernelHerding(K_D)
+kh_D.run()
+kh_w = KernelHerding(K_w)
+kh_w.run()
+#+end_src
+
+#+RESULTS:
+
+
+#+begin_src jupyter-python
+plot_kh_weights(kh_w, kh_D, train_tasks, until_t=20)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: array([<matplotlib.axes._subplots.AxesSubplot object at 0x7f29ab196f10>,
+:        <matplotlib.axes._subplots.AxesSubplot object at 0x7f29ab156390>,
+:        <matplotlib.axes._subplots.AxesSubplot object at 0x7f29ab109b50>],
+:       dtype=object)
+[[file:./.ob-jupyter/cb25e5539971a7b32d867f2716acd7f7c0159741.png]]
+:END:
+
+*** KNN Meta learning
+:LOGBOOK:
+CLOCK: [2020-05-13 Wed 17:48]--[2020-05-13 Wed 18:13] =>  0:25
+:END:
+We run KNN meta learning on the dataset to see and understand what works where.
+We consider
+- Uniform
+- KH on data
+- KH on weights
+and we use the true weights. Alternatively, we will shrink the true weights to
+see how that impacts (and possibly make it better than using the true weights).
+This is due to the observed phenomenon where the ridge weights perform better
+than the true weights.
+
+Calculate the mmd distances from all the train to test tasks. These are used
+later when we use the KNN algorithm
+#+begin_src jupyter-python
+train_datasets = form_datasets_from_tasks(train_tasks)
+# Don't cheat, can only use support/train set for meta-test and meta-val
+# tr_val_datasets = form_datasets_from_tasks(val_tasks, use_only_train=True)
+tr_test_datasets = form_datasets_from_tasks(test_tasks, use_only_train=True)
+# M_tr_val_D = np.sqrt(_mmd2_matrix(train_datasets, tr_val_datasets, base_s2_D))
+M_tr_te_D = np.sqrt(_mmd2_matrix(train_datasets, tr_test_datasets, base_s2_D))
+#+end_src
+
+#+RESULTS:
+
+We have two things to set, \(\alpha_{RR}, \alpha_{prot}\) for the regularisation
+parameter in Ridge Regression and Prototypes.
+#+begin_src jupyter-python
+alpha_rrs = np.geomspace(1e-6, 1, 7)
+alpha_prot = 0.001
+#+end_src
+
+#+RESULTS:
+
+*** ITL Ridge Reg
+Evaluate ridge regression in an independent task learning setting
+#+begin_src jupyter-python
+rr = RidgeRegression(alpha=0.0001)
+itl_rr = IndependentTaskLearning(train_tasks, rr)
+itl_rr_opt_params, itl_rr_cross_val_loss = cross_validate_itl(
+    itl_rr, {"alpha": alpha_rrs.tolist()}
+)
+itl_rr.set_params(itl_rr_opt_params)
+itl_rr.tasks = test_tasks
+itl_rr.calculate_transfer_risk()
+#+end_src
+
+#+RESULTS:
+#+begin_example
+2020-05-14 11:14:42.204 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 1e-06}
+2020-05-14 11:14:42.292 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010853324765530876
+2020-05-14 11:14:42.292 | INFO     | __main__:cross_validate_itl:68 - Best params so far {'alpha': 1e-06}, with loss 0.0109
+2020-05-14 11:14:42.293 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 1e-05}
+2020-05-14 11:14:42.367 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010853311593953424
+2020-05-14 11:14:42.367 | INFO     | __main__:cross_validate_itl:68 - Best params so far {'alpha': 1e-05}, with loss 0.0109
+2020-05-14 11:14:42.368 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 0.0001}
+2020-05-14 11:14:42.425 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010853180094952985
+2020-05-14 11:14:42.426 | INFO     | __main__:cross_validate_itl:68 - Best params so far {'alpha': 0.0001}, with loss 0.0109
+2020-05-14 11:14:42.427 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 0.001}
+2020-05-14 11:14:42.530 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010851886753285179
+2020-05-14 11:14:42.531 | INFO     | __main__:cross_validate_itl:68 - Best params so far {'alpha': 0.001}, with loss 0.0109
+2020-05-14 11:14:42.532 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 0.01}
+2020-05-14 11:14:42.623 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010841089435186475
+2020-05-14 11:14:42.624 | INFO     | __main__:cross_validate_itl:68 - Best params so far {'alpha': 0.01}, with loss 0.0108
+2020-05-14 11:14:42.625 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 0.1}
+2020-05-14 11:14:42.700 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.010921021089069177
+2020-05-14 11:14:42.701 | INFO     | __main__:cross_validate_itl:59 - Cross validating params: {'alpha': 1.0}
+2020-05-14 11:14:42.789 | INFO     | __main__:cross_validate_itl:63 - Current loss: 0.019001782756462793
+#+end_example
+The train loss
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+sns.distplot(itl_rr.losses_, kde=True, rug=True, ax=ax)
+ax.axvline(itl_rr.losses_.mean(), color="red", linestyle="--")
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.lines.Line2D at 0x7f29b0389790>
+#+attr_org: :width 377
+[[file:./.ob-jupyter/9cf1942e1524732d6bcf87b7887169d78f23d35b.png]]
+:END:
+
+*** Meta-learning setup
+:LOGBOOK:
+CLOCK: [2020-05-13 Wed 18:49]--[2020-05-13 Wed 19:14] =>  0:25
+:END:
+Now we proceed to do active meta learning. We will reorder the sequences
+according to KH on weights and data. As the actual meta learning algorithm we
+will use the KNN on datasets and use the biased ridge regression. We will reuse
+the optimal alpha from ITL with ridge reg. From here on we split into two cases,
+where for the prototype estimator we use
+- Ridge Regression
+- True Weights
+
+we use 3 for the number of nearest neighbours
+#+begin_src jupyter-python
+k_nn = 3
+#+end_src
+
+#+RESULTS:
+
+**** Biased Ridge Reg
+:LOGBOOK:
+CLOCK: [2020-05-13 Wed 19:34]--[2020-05-13 Wed 19:59] =>  0:25
+:END:
+#+begin_src jupyter-python
+aml_order = kh_D.sampled_order
+biased_rr = BiasedRidgeRegression(alpha=0.1)
+model = MetaKNNExperiment(
+    train_tasks,
+    test_tasks,
+    M_tr_te_D,
+    biased_rr,
+    k_nn,
+    aml_order,
+    RidgeRegPrototypeEstimator(alpha=alpha_prot),
+)
+model.calculate_transfer_risk()
+#+end_src
+
+#+RESULTS:
+
+Let's look at how this evolved over time, and compare it with the ITL baseline
+#+begin_src jupyter-python
+fig, ax = plt.subplots()
+t = np.arange(model.loss_matrix_.shape[0])
+plot_aml_ci(ax, model.loss_matrix_, "blue", "aml", 100)
+plot_itl_ci(ax, itl_rr.losses_, "red", "itl", 100)
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+#+attr_org: :width 387
+[[file:./.ob-jupyter/4431f4de065788bd5148b7b937355f2fd384d8de.png]]
+:END:
+
+#+begin_src jupyter-python
+itl_vs_ws = np.linalg.norm(itl_rr.weights_ - test_ws, axis=1)
+aml_w0_vs_ws = np.linalg.norm(model.w_0_[-1, :] - test_ws, axis=1)
+aml_w_hat_vs_ws = np.linalg.norm(model.w_hat_[-1, :] - test_ws, axis=1)
+fig, ax = plt.subplots(3, 1, sharex=True)
+ax[0].hist(itl_vs_ws)
+ax[0].axvline(np.mean(itl_vs_ws), color="red")
+ax[1].hist(aml_w0_vs_ws)
+ax[1].axvline(np.mean(aml_w0_vs_ws), color="red")
+ax[2].hist(aml_w_hat_vs_ws)
+ax[2].axvline(np.mean(aml_w_hat_vs_ws), color="red")
+#+end_src
+
+#+RESULTS:
+:RESULTS:
+: <matplotlib.lines.Line2D at 0x7f29aabbe690>
+#+attr_org: :width 370
+[[file:./.ob-jupyter/217e05c3994490d4fef22bfa4c1580254161046c.png]]
+:END:
+
+**** True Weights
